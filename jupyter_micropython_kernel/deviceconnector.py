@@ -137,8 +137,14 @@ class DeviceConnector:
             self.workingwebsocket.close()
             self.workingwebsocket = None
 
-    def serialconnect(self, portname, baudrate, verbose):
+    def serialconnect(self, portname, baudrate, verbose=False, name_hint=None):
         assert not  self.workingserial
+        if name_hint is not None:
+            portsfound = self.find_connected_boards(name_hint)
+            self.sres("Found multiple serial ports: {} \n".format(", ".join(portsfound)))
+            if len(portsfound)>0:
+                portname = portsfound[0]
+
         if type(portname) is int:
             portindex = portname
             possibleports = guessserialport()
@@ -513,5 +519,16 @@ class DeviceConnector:
 
     def serialexists(self):
         return self.workingserial or self.workingsocket or self.workingwebsocket
-        
-        
+
+    @staticmethod
+    def find_connected_boards(name_hint=""):
+        """
+        Returns name of com ports where hint is part of port description
+        :return: list of string representing com ports
+        """
+        ports = list(serial.tools.list_ports.comports())
+        connected = []
+        for p in ports:
+            if name_hint in p[1]:
+                connected.append(p[0])
+        return connected

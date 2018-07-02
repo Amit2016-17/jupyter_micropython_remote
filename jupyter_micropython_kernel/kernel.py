@@ -19,6 +19,7 @@ import argparse, shlex
 ap_serialconnect = argparse.ArgumentParser(prog="%serialconnect", add_help=False)
 ap_serialconnect.add_argument('--raw', help='Just open connection', action='store_true')
 ap_serialconnect.add_argument('--port', type=str, default=0)
+ap_serialconnect.add_argument('--name_hint', type=str, default=None)
 ap_serialconnect.add_argument('--baud', type=int, default=115200)
 ap_serialconnect.add_argument('--verbose', action='store_true')
 
@@ -145,7 +146,7 @@ class MicroPythonKernel(Kernel):
             apargs = parseap(ap_serialconnect, percentstringargs[1:])
             
             self.dc.disconnect(apargs.verbose)
-            self.dc.serialconnect(apargs.port, apargs.baud, apargs.verbose)
+            self.dc.serialconnect(apargs.port, apargs.baud, verbose=apargs.verbose, name_hint=apargs.name_hint)
             if self.dc.workingserial:
                 if not apargs.raw:
                     if self.dc.enterpastemode(verbose=apargs.verbose):
