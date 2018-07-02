@@ -144,6 +144,8 @@ class DeviceConnector:
             self.sres("Found multiple serial ports: {} \n".format(", ".join(portsfound)))
             if len(portsfound)>0:
                 portname = portsfound[0]
+        else:
+            self.sresSYS("No Name hint provided, will connect on %d" % portname)
 
         if type(portname) is int:
             portindex = portname
