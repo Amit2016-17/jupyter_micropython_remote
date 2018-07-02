@@ -141,11 +141,11 @@ class DeviceConnector:
         assert not  self.workingserial
         if name_hint is not None:
             portsfound = self.find_connected_boards(name_hint)
-            self.sres("Found multiple serial ports: {} \n".format(", ".join(portsfound)))
+            self.sres("found ports using name hint ({}): {} \n".format(name_hint, ", ".join(portsfound)))
             if len(portsfound)>0:
                 portname = portsfound[0]
-        else:
-            self.sresSYS("No Name hint provided, will connect on %d" % portname)
+        
+            self.sresSYS("Will connect on %s\n" % portname)
 
         if type(portname) is int:
             portindex = portname
