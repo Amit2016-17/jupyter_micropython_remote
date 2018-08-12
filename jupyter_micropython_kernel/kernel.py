@@ -1,11 +1,8 @@
 from ipykernel.kernelbase import Kernel
 
-import logging, sys, time, os, re
-import serial, socket, serial.tools.list_ports, select
-import websocket  # only for WebSocketConnectionClosedException
-import mpy_cross
-from glob import glob
-from . import deviceconnector
+import logging, time, os, re
+import subprocess
+from . import pyboard, mprepl
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -13,29 +10,22 @@ logger.setLevel(logging.INFO)
 serialtimeout = 0.5
 serialtimeoutcount = 10
 
+wifimessageignore = re.compile("(\x1b\[[\d;]*m)?[WI] \(\d+\) (wifi|system_api|modsocket|phy|event|cpu_start|heap_init|network|wpa): ")
+
 # use of argparse for handling the %commands in the cells
 import argparse, shlex
 
-ap_serialconnect = argparse.ArgumentParser(prog="%serialconnect", add_help=False)
-ap_serialconnect.add_argument('--raw', help='Just open connection', action='store_true')
-ap_serialconnect.add_argument('--port', type=str, default=0)
-ap_serialconnect.add_argument('--name_hint', type=str, default=None)
-ap_serialconnect.add_argument('--baud', type=int, default=115200)
-ap_serialconnect.add_argument('--verbose', action='store_true')
+ap_connect = argparse.ArgumentParser(prog="%connect", add_help=False)
+ap_connect.add_argument('device', type=str, help='Device Identifier')
+ap_connect.add_argument('--port2', type=str, help='if provided, use second serial port for binary data')
+ap_connect.add_argument('--baudrate', type=int, default=115200)
+ap_connect.add_argument('--user', type=str, default='micro')
+ap_connect.add_argument('--password', type=str, default='python')
+ap_connect.add_argument('--wait', type=int, default=0)
 
-ap_socketconnect = argparse.ArgumentParser(prog="%socketconnect", add_help=False)
-ap_socketconnect.add_argument('--raw', help='Just open connection', action='store_true')
-ap_socketconnect.add_argument('ipnumber', type=str)
-ap_socketconnect.add_argument('portnumber', type=int)
 
 ap_disconnect = argparse.ArgumentParser(prog="%disconnect", add_help=False)
-ap_disconnect.add_argument('--raw', help='Close connection without exiting paste mode', action='store_true')
-
-ap_websocketconnect = argparse.ArgumentParser(prog="%websocketconnect", add_help=False)
-ap_websocketconnect.add_argument('--raw', help='Just open connection', action='store_true')
-ap_websocketconnect.add_argument('websocketurl', type=str, default="ws://192.168.4.1:8266", nargs="?")
-ap_websocketconnect.add_argument("--password", type=str)
-ap_websocketconnect.add_argument('--verbose', action='store_true')
+ap_disconnect.add_argument('--raw', help='Close connection without exiting raw mode', action='store_true')
 
 ap_writebytes = argparse.ArgumentParser(prog="%writebytes", add_help=False)
 ap_writebytes.add_argument('--binary', '-b', action='store_true')
@@ -59,10 +49,8 @@ ap_mpycross = argparse.ArgumentParser(prog="%mpy-cross", add_help=False)
 ap_mpycross.add_argument('--set-exe', type=str)
 ap_mpycross.add_argument('pyfile', type=str, nargs="?")
 
-ap_esptool = argparse.ArgumentParser(prog="%esptool", add_help=False)
-ap_esptool.add_argument('--port', type=str, default=0)
-ap_esptool.add_argument('espcommand', choices=['erase', 'esp32', 'esp8266'])
-ap_esptool.add_argument('binfile', type=str, nargs="?")
+ap_shell = argparse.ArgumentParser(prog="%shell", add_help=False)
+ap_shell.add_argument('args', nargs="*")
 
 ap_capture = argparse.ArgumentParser(prog="%capture", description="capture output printed by device and save to a file", add_help=False)
 ap_capture.add_argument('--quiet', '-q', action='store_true')
@@ -75,9 +63,12 @@ ap_writefilepc.add_argument('--execute', '-x', action='store_true')
 ap_writefilepc.add_argument('destinationfilename', type=str)
  
 
-def parseap(ap, percentstringargs1):
+def parseap(ap, percentstringargs1, extras=False):
     try:
-        return ap.parse_known_args(percentstringargs1)[0]
+        args, extra = ap.parse_known_args(percentstringargs1)
+        if extras:
+            return args, extra
+        return args
     except SystemExit:  # argparse throws these because it assumes you only want to do the command line
         return None  # should be a default one
         
@@ -123,15 +114,23 @@ class MicroPythonKernel(Kernel):
     def __init__(self, **kwargs):
         Kernel.__init__(self, **kwargs)
         self.silent = False
-        self.dc = deviceconnector.DeviceConnector(self.sres, self.sresSYS)
+        self.repl = None  # type: mprepl.MpRepl
         self.mpycrossexe = None
 
         self.srescapturemode = 0            # 0 none, 1 print lines, 2 print on-going line count (--quiet), 3 print only final line count (--QUIET)
         self.srescapturedoutputfile = None  # used by %capture command
         self.srescapturedlinecount = 0
         self.srescapturedlasttime = 0       # to control the frequency of capturing reported
-        
-        
+
+    def mpycross(self, mpycrossexe, pyfile):
+        pargs = [mpycrossexe, pyfile]
+        self.sresSYS("Executing:  {}\n".format(" ".join(pargs)))
+        process = subprocess.Popen(pargs, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        for line in process.stdout:
+            self.sres(line.decode())
+        for line in process.stderr:
+            self.sres(line.decode(), n04count=1)
+
     def interpretpercentline(self, percentline, cellcontents):
         try:
             percentstringargs = shlex.split(percentline)
@@ -142,72 +141,55 @@ class MicroPythonKernel(Kernel):
 
         percentcommand = percentstringargs[0]
 
-        if percentcommand == ap_serialconnect.prog:
-            apargs = parseap(ap_serialconnect, percentstringargs[1:])
+        if percentcommand == ap_connect.prog:
+            import pydevd
+            pydevd.settrace('localhost', port=9876, suspend=False,
+                            stdoutToServer=False, stderrToServer=False)
+
+            apargs = parseap(ap_connect, percentstringargs[1:])
             
-            self.dc.disconnect(apargs.verbose)
-            self.dc.serialconnect(apargs.port, apargs.baud, verbose=apargs.verbose, name_hint=apargs.name_hint)
-            if self.dc.workingserial:
-                if not apargs.raw:
-                    if self.dc.enterpastemode(verbose=apargs.verbose):
-                        self.sresSYS("Ready.\n")
-                    else:
-                        self.sres("Disconnecting [paste mode not working]\n", 31)
-                        self.dc.disconnect(verbose=apargs.verbose)
-                        self.sresSYS("  (You may need to reset the device)")
-                        cellcontents = ""
-            else:
+            if self.repl and self.repl.connected:
+                self.repl.close()
+
+            try:
+
+                self.repl = mprepl.MpRepl(apargs.device,
+                                          apargs.port2,
+                                          baudrate=apargs.baudrate,
+                                          user=apargs.user,
+                                          password=apargs.password,
+                                          wait=apargs.wait
+                                          )
+
+                # if not apargs.raw:
+                self.repl.connect()
+                self.sresSYS("Ready.\n")
+
+                    # else:
+                    #     self.sres("Disconnecting [paste mode not working]\n", 31)
+                    #     self.dc.disconnect(verbose=apargs.verbose)
+                    #     self.sresSYS("  (You may need to reset the device)")
+                    #     cellcontents = ""
+
+            except pyboard.PyboardError as ex:
+                self.sresSYS("  Error connecting: %s" % ex)
+
                 cellcontents = ""
+
             return cellcontents.strip() and cellcontents or None
 
-        if percentcommand == ap_websocketconnect.prog:
-            apargs = parseap(ap_websocketconnect, percentstringargs[1:])
-            if apargs.password is None and not apargs.raw:
-                self.sres(ap_websocketconnect.format_help())
-                return None
-            self.dc.websocketconnect(apargs.websocketurl)
-            if self.dc.workingwebsocket: 
-                self.sresSYS("** WebSocket connected **\n", 32)
-                if not apargs.raw:
-                    pline = self.dc.workingwebsocket.recv()
-                    self.sres(pline)
-                    if pline == 'Password: ' and apargs.password is not None:
-                        self.dc.workingwebsocket.send(apargs.password)
-                        self.dc.workingwebsocket.send("\r\n")
-                        res = self.dc.workingserialreadall()
-                        self.sres(res)  # '\r\nWebREPL connected\r\n>>> '
-                        if not apargs.raw:
-                            if self.dc.enterpastemode(apargs.verbose):
-                                self.sresSYS("Ready.\n")
-                            else:
-                                self.sres("Disconnecting [paste mode not working]\n", 31)
-                                self.dc.disconnect(verbose=apargs.verbose)
-                                self.sres("  (You may need to reset the device)")
-                                cellcontents = ""
-            else:
-                cellcontents = ""
-            return cellcontents.strip() and cellcontents or None
+        if percentcommand == ap_shell.prog:
+            apargs, args = parseap(ap_shell, percentstringargs[1:], True)
+            with subprocess.Popen(list(apargs.args) + list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0) as proc:
+                while proc.poll() is None:
+                    self.sres(proc.stdout.readline().decode())
+                self.sres(proc.stdout.read().decode())
 
-        # this is the direct socket kind, not attached to a webrepl
-        if percentcommand == ap_socketconnect.prog:   
-            apargs = parseap(ap_socketconnect, percentstringargs[1:])
-            self.dc.socketconnect(apargs.ipnumber, apargs.portnumber)
-            if self.dc.workingsocket:
-                self.sres("\n ** Socket connected **\n\n", 32)
-                if apargs.verbose:
-                    self.sres(str(self.dc.workingsocket))
-                self.sres("\n")
-                #if not apargs.raw:
-                #    self.dc.enterpastemode()
-            return cellcontents.strip() and cellcontents or None
-
-        if percentcommand == ap_esptool.prog:
-            apargs = parseap(ap_esptool, percentstringargs[1:])
-            if apargs and (apargs.espcommand == "erase" or apargs.binfile):
-                self.dc.esptool(apargs.espcommand, apargs.port, apargs.binfile)
-            else:
-                self.sres(ap_esptool.format_help())
-                self.sres("Please download the bin file from https://micropython.org/download/#{}".format(apargs.espcommand if apargs else ""))
+            # if apargs and ((apargs.espcommand == "erase" or apargs.binfile) or args):
+            #     self.dc.esptool(apargs.espcommand, apargs.port, apargs.binfile, args)
+            # else:
+            #     self.sres(ap_shell.format_help())
+            #     self.sres("Please download the bin file from https://micropython.org/download/#{}".format(apargs.espcommand if apargs else ""))
             return cellcontents.strip() and cellcontents or None
 
         if percentcommand == ap_writefilepc.prog:
@@ -234,11 +216,13 @@ class MicroPythonKernel(Kernel):
             if apargs and apargs.set_exe:
                 self.mpycrossexe = apargs.set_exe
             elif apargs.pyfile:
-                if not self.mpycrossexe:
-                    self.mpycrossexe = mpy_cross.mpy_cross
-
-                for pyfile in glob(apargs.pyfile):
-                    self.dc.mpycross(self.mpycrossexe, pyfile)
+                if self.mpycrossexe:
+                    self.mpycross(self.mpycrossexe, apargs.pyfile)
+                else:
+                    self.sres("Cross compiler executable not yet set\n", 31)
+                    self.sres("try: %mpy-cross --set-exe /home/julian/extrepositories/micropython/mpy-cross/mpy-cross\n")
+                if self.mpycrossexe:
+                    self.mpycrossexe = "/home/julian/extrepositories/micropython/mpy-cross/mpy-cross"
             else:
                 self.sres(ap_mpycross.format_help())
             return cellcontents.strip() and cellcontents or None
@@ -253,8 +237,8 @@ class MicroPythonKernel(Kernel):
             self.sres("%comment\n    print this into output\n\n")
             self.sres(re.sub("usage: ", "", ap_disconnect.format_usage()))
             self.sres("    disconnects from web/serial connection\n\n")
-            self.sres(re.sub("usage: ", "", ap_esptool.format_usage()))
-            self.sres("    commands for flashing your esp-device\n\n")
+            self.sres(re.sub("usage: ", "", ap_shell.format_usage()))
+            self.sres("    used to run a shell command\n\n")
             self.sres("%lsmagic\n    list magic commands\n\n")
             self.sres(re.sub("usage: ", "", ap_mpycross.format_usage()))
             self.sres("    cross-compile a .py file to a .mpy file\n\n")
@@ -264,15 +248,10 @@ class MicroPythonKernel(Kernel):
             self.sres("%rebootdevice\n    reboots device\n\n")
             self.sres(re.sub("usage: ", "", ap_sendtofile.format_usage()))
             self.sres("    send cell contents or file from disk to device file or directory\n\n")
-            self.sres(re.sub("usage: ", "", ap_serialconnect.format_usage()))
-            self.sres("    connects to a device over USB wire\n\n")
-            self.sres(re.sub("usage: ", "", ap_socketconnect.format_usage()))
-            self.sres("    connects to a socket of a device over wifi\n\n")
+            self.sres(re.sub("usage: ", "", ap_connect.format_usage()))
+            self.sres("    connects to a micropython device\n\n")
             self.sres("%suppressendcode\n    doesn't send x04 or wait to read after sending the contents of the cell\n")
             self.sres("  (assists for debugging using %writebytes and %readbytes)\n\n")
-            self.sres(re.sub("usage: ", "", ap_websocketconnect.format_usage()))
-            self.sres("    connects to the webREPL websocket of an ESP8266 over wifi\n")
-            self.sres("    websocketurl defaults to ws://192.168.4.1:8266 but be sure to be connected\n\n")
             self.sres(re.sub("usage: ", "", ap_writebytes.format_usage()))
             self.sres("    does serial.write() of the python quoted string given\n\n")
             self.sres(re.sub("usage: ", "", ap_writefilepc.format_usage()))
@@ -282,11 +261,12 @@ class MicroPythonKernel(Kernel):
 
         if percentcommand == ap_disconnect.prog:
             apargs = parseap(ap_disconnect, percentstringargs[1:])
-            self.dc.disconnect(raw=apargs.raw, verbose=True)
+            if self.repl:
+                self.repl.close()
             return None
         
         # remaining commands require a connection
-        if not self.dc.serialexists():
+        if not (self.repl and self.repl.connected):
             return cellcontents
 
         if percentcommand == ap_capture.prog:
@@ -305,7 +285,7 @@ class MicroPythonKernel(Kernel):
             apargs = parseap(ap_writebytes, percentstringargs[1:])
             if apargs:
                 bytestosend = apargs.stringtosend.encode().decode("unicode_escape").encode()
-                res = self.dc.writebytes(bytestosend)
+                res = self.repl.write(bytestosend)
                 if apargs.verbose:
                     self.sres(res, asciigraphicscode=34)
             else:
@@ -316,18 +296,18 @@ class MicroPythonKernel(Kernel):
             # (not effectively using the --binary setting)
             apargs = parseap(ap_readbytes, percentstringargs[1:])
             time.sleep(0.1)   # just give it a moment if running on from a series of values (could use an --expect keyword)
-            l = self.dc.workingserialreadall()
+            l = self.repl.read(timeout=5)
             if apargs.binary:
                 self.sres(repr(l))
-            elif type(l) == bytes:
+            elif isinstance(l, bytes):
                 self.sres(l.decode(errors="ignore"))
             else:
                 self.sres(l)   # strings come back from webrepl
             return cellcontents.strip() and cellcontents or None
             
         if percentcommand == "%rebootdevice":
-            self.dc.sendrebootmessage()
-            self.dc.enterpastemode()
+            self.repl.pyb.exit_raw_repl()
+            self.repl.connect()
             return cellcontents.strip() and cellcontents or None
             
         if percentcommand == "%reboot":
@@ -360,6 +340,7 @@ class MicroPythonKernel(Kernel):
 
                 destfn = apargs.destinationfilename
                 def sendtofile(filename, contents):
+                    raise NotImplementedError
                     self.dc.sendtofile(filename, apargs.mkdir, apargs.append, apargs.binary, apargs.quiet, contents)
 
                 if apargs.source == "<<cellcontents>>":
@@ -378,17 +359,13 @@ class MicroPythonKernel(Kernel):
                     if os.path.isfile(apargs.source):
                         filecontents = open(apargs.source, mode).read()
                         if apargs.execute:
-                            self.sres("Cannot execute sourced file\n", 31)
+                            self.sres("Cannot excecute sourced file\n", 31)
                         sendtofile(destfn, filecontents)
 
                     elif os.path.isdir(apargs.source):
                         if apargs.execute:
-                            self.sres("Cannot execute folder\n", 31)
+                            self.sres("Cannot excecute folder\n", 31)
                         for root, dirs, files in os.walk(apargs.source):
-
-                            if apargs.mkdir:
-                                self.dc.rmtree(destfn)
-
                             for fn in files:
                                 skip = False
                                 fp = os.path.join(root, fn)
@@ -405,32 +382,53 @@ class MicroPythonKernel(Kernel):
                 self.sres(ap_sendtofile.format_help())
             return cellcontents   # allows for repeat %sendtofile in same cell
 
-
         self.sres("Unrecognized percentline {}\n".format([percentline]), 31)
         return cellcontents
         
     def runnormalcell(self, cellcontents, bsuppressendcode):
-        cmdlines = cellcontents.splitlines(True)
-        r = self.dc.workingserialreadall()
-        if r:
-            self.sres('[priorstuff] ')
-            self.sres(str(r))
-            
-        for line in cmdlines:
-            if line:
-                if line[-2:] == '\r\n':
-                    line = line[:-2]
-                elif line[-1] == '\n':
-                    line = line[:-1]
-                self.dc.writeline(line)
-                r = self.dc.workingserialreadall()
-                if r:
-                    self.sres('[duringwriting] ')
-                    self.sres(str(r))
-                    
-        if not bsuppressendcode:
-            self.dc.writebytes(b'\r\x04')
-            self.dc.receivestream(bseekokay=True)
+        # cmdlines = cellcontents.splitlines(True)
+        # r = self.repl.read()
+        # if r:
+        #     self.sres('[priorstuff] ')
+        #     self.sres(str(r))
+
+        n04count = 0
+
+        def follow(data):
+            nonlocal n04count
+            if not data:
+                return
+            if b"\x04" in data:
+                data = data.strip(b"\x04")
+                n04count += 1
+            if data:
+                self.sres(data.decode(), n04count=n04count)
+
+        try:
+
+            ret, ret_err = self.repl.exec_(cellcontents, follow)
+            if ret_err:
+                follow(ret_err)
+            # if ret:
+            #     self.sres(ret)
+        except pyboard.PyboardError as ex:
+            self.sres('Comms Exception %s' % ex)
+
+        # for line in cmdlines:
+        #     if line:
+        #         if line[-2:] == '\r\n':
+        #             line = line[:-2]
+        #         elif line[-1] == '\n':
+        #             line = line[:-1]
+        #         self.dc.writeline(line)
+        #         r = self.repl.read()
+        #         if r:
+        #             self.sres('[duringwriting] ')
+        #             self.sres(str(r))
+        #
+        # if not bsuppressendcode:
+        #     self.dc.writebytes(b'\r\x04')
+        #     self.dc.receivestream(bseekokay=True)
         
     def sendcommand(self, cellcontents):
         bsuppressendcode = False  # can't yet see how to get this signal through
@@ -449,10 +447,9 @@ class MicroPythonKernel(Kernel):
             if cellcontents is None:
                 return
                 
-        if not self.dc.serialexists():
+        if not (self.repl and self.repl.connected):
             self.sres("No serial connected\n", 31)
-            self.sres("  %serialconnect to connect\n")
-            self.sres("  %esptool to flash the device\n")
+            self.sres("  %connect to connect\n")
             self.sres("  %lsmagic to list commands")
             return
             
@@ -463,7 +460,9 @@ class MicroPythonKernel(Kernel):
     def sresSYS(self, output, clear_output=False):   # system call
         self.sres(output, asciigraphicscode=34, clear_output=clear_output)
     # 1=bold, 31=red, 32=green, 34=blue; from http://ascii-table.com/ansi-escape-sequences.php
+
     def sres(self, output, asciigraphicscode=None, n04count=0, clear_output=False):
+        output = output.decode() if isinstance(output, bytes) else output
         if self.silent:
             return
             
@@ -486,7 +485,7 @@ class MicroPythonKernel(Kernel):
             self.send_response(self.iopub_socket, 'clear_output', {"wait":True})
         if asciigraphicscode:
             output = "\x1b[{}m{}\x1b[0m".format(asciigraphicscode, output)
-        stream_content = {'name': ("stdout" if n04count == 0 else "stderr"), 'text': output }
+        stream_content = {'name': ("stdout" if n04count == 0 else "stderr"), 'text': output}
         self.send_response(self.iopub_socket, 'stream', stream_content)
 
     def do_execute(self, code, silent, store_history=True, user_expressions=None, allow_stdin=False):
@@ -496,36 +495,36 @@ class MicroPythonKernel(Kernel):
 
         interrupted = False
         
-        # clear buffer out before executing any commands (except the readbytes one)
-        if self.dc.serialexists() and not re.match("\s*%readbytes|\s*%disconnect|\s*%serialconnect|\s*websocketconnect", code):
-            priorbuffer = None
-            try:
-                priorbuffer = self.dc.workingserialreadall()
-            except KeyboardInterrupt:
-                interrupted = True
-            except OSError as e:
-                priorbuffer = []
-                self.sres("\n\n***Connection broken [%s]\n" % str(e.strerror), 31)
-                self.sres("You may need to reconnect")
-            except websocket.WebSocketConnectionClosedException as e:
-                priorbuffer = []
-                self.sres("\n\n***Websocket connection broken [%s]\n" % str(e.strerror), 31)
-                self.sres("You may need to reconnect")
-                
-            if priorbuffer:
-                if type(priorbuffer) == bytes:
-                    try:
-                        priorbuffer = priorbuffer.decode()
-                    except UnicodeDecodeError:
-                        priorbuffer = str(priorbuffer)
-                
-                for pbline in priorbuffer.splitlines():
-                    if deviceconnector.wifimessageignore.match(pbline):
-                        continue   # filter out boring wifi status messages
-                    if pbline:
-                        self.sres('[leftinbuffer] ')
-                        self.sres(str([pbline]))
-                        self.sres('\n')
+        # # clear buffer out before executing any commands (except the readbytes one)
+        # if self.repl and self.repl.connected and not re.match("\s*%readbytes|\s*%disconnect|\s*%connect|\s*websocketconnect", code):
+        #     priorbuffer = None
+        #     try:
+        #         priorbuffer = self.repl.read()
+        #     except KeyboardInterrupt:
+        #         interrupted = True
+        #     except OSError as e:
+        #         priorbuffer = []
+        #         self.sres("\n\n***Connection broken [%s]\n" % str(e.strerror), 31)
+        #         self.sres("You may need to reconnect")
+        #     except (pyboard.PyboardError, Exception) as e:
+        #         priorbuffer = []
+        #         self.sres("\n\n***Exception [%s]\n" % str(e), 31)
+        #         self.sres("You may need to reconnect")
+        #
+        #     if priorbuffer:
+        #         if isinstance(priorbuffer, bytes):
+        #             try:
+        #                 priorbuffer = priorbuffer.decode()
+        #             except UnicodeDecodeError:
+        #                 priorbuffer = str(priorbuffer)
+        #
+        #         for pbline in priorbuffer.splitlines():
+        #             if wifimessageignore.match(pbline):
+        #                 continue   # filter out boring wifi status messages
+        #             if pbline:
+        #                 self.sres('[leftinbuffer] ')
+        #                 self.sres(str([pbline]))
+        #                 self.sres('\n')
 
         try:
             if not interrupted:
@@ -552,11 +551,12 @@ class MicroPythonKernel(Kernel):
             
         if interrupted:
             self.sresSYS("\n\n*** Sending Ctrl-C\n\n")
-            if self.dc.serialexists():
-                self.dc.writebytes(b'\r\x03')
+            if self.repl and self.repl.connected:
+                self.repl.write(b'\r\x03\x03')
                 interrupted = True
                 try:
-                    self.dc.receivestream(bseekokay=False, b5secondtimeout=True)
+                    self.repl.read(timeout=5)
+                    # self.dc.receivestream(bseekokay=False, b5secondtimeout=True)
                 except KeyboardInterrupt:
                     self.sres("\n\nKeyboard interrupt while waiting response on Ctrl-C\n\n")
                 except OSError as e:
@@ -566,4 +566,3 @@ class MicroPythonKernel(Kernel):
         # everything already gone out with send_response(), but could detect errors (text between the two \x04s
 
         return {'status': 'ok', 'execution_count': self.execution_count, 'payload': [], 'user_expressions': {}}
-                    
