@@ -23,7 +23,6 @@ ap_connect.add_argument('--user', type=str, default='micro')
 ap_connect.add_argument('--password', type=str, default='python')
 ap_connect.add_argument('--wait', type=int, default=0)
 
-
 ap_disconnect = argparse.ArgumentParser(prog="%disconnect", add_help=False)
 ap_disconnect.add_argument('--raw', help='Close connection without exiting raw mode', action='store_true')
 
@@ -51,6 +50,8 @@ ap_mpycross.add_argument('pyfile', type=str, nargs="?")
 
 ap_shell = argparse.ArgumentParser(prog="%shell", add_help=False)
 ap_shell.add_argument('args', nargs="*")
+
+ap_local = argparse.ArgumentParser(prog="%local", add_help=False)
 
 ap_capture = argparse.ArgumentParser(prog="%capture", description="capture output printed by device and save to a file", add_help=False)
 ap_capture.add_argument('--quiet', '-q', action='store_true')
@@ -122,6 +123,8 @@ class MicroPythonKernel(Kernel):
         self.srescapturedlinecount = 0
         self.srescapturedlasttime = 0       # to control the frequency of capturing reported
 
+        self.localenv = dict(globals={'print': self.sres}, locals={})
+
     def mpycross(self, mpycrossexe, pyfile):
         pargs = [mpycrossexe, pyfile]
         self.sresSYS("Executing:  {}\n".format(" ".join(pargs)))
@@ -142,9 +145,6 @@ class MicroPythonKernel(Kernel):
         percentcommand = percentstringargs[0]
 
         if percentcommand == ap_connect.prog:
-            import pydevd
-            pydevd.settrace('localhost', port=9876, suspend=False,
-                            stdoutToServer=False, stderrToServer=False)
 
             apargs = parseap(ap_connect, percentstringargs[1:])
             
@@ -185,12 +185,15 @@ class MicroPythonKernel(Kernel):
                     self.sres(proc.stdout.readline().decode())
                 self.sres(proc.stdout.read().decode())
 
-            # if apargs and ((apargs.espcommand == "erase" or apargs.binfile) or args):
-            #     self.dc.esptool(apargs.espcommand, apargs.port, apargs.binfile, args)
-            # else:
-            #     self.sres(ap_shell.format_help())
-            #     self.sres("Please download the bin file from https://micropython.org/download/#{}".format(apargs.espcommand if apargs else ""))
             return cellcontents.strip() and cellcontents or None
+
+        if percentcommand == ap_local.prog:
+            try:
+                self.sres(exec(cellcontents, self.localenv['globals'], self.localenv['locals']))
+            except BaseException as ex:
+                import traceback
+                self.sres(traceback.format_exc(-1), n04count=1)
+            return None
 
         if percentcommand == ap_writefilepc.prog:
             apargs = parseap(ap_writefilepc, percentstringargs[1:])
@@ -239,6 +242,8 @@ class MicroPythonKernel(Kernel):
             self.sres("    disconnects from web/serial connection\n\n")
             self.sres(re.sub("usage: ", "", ap_shell.format_usage()))
             self.sres("    used to run a shell command\n\n")
+            self.sres(re.sub("usage: ", "", ap_local.format_usage()))
+            self.sres("    runs the cell in local environment instead\n\n")
             self.sres("%lsmagic\n    list magic commands\n\n")
             self.sres(re.sub("usage: ", "", ap_mpycross.format_usage()))
             self.sres("    cross-compile a .py file to a .mpy file\n\n")

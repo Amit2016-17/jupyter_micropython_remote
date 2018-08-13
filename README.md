@@ -1,6 +1,6 @@
 # Jupyter MicroPython Kernel
 
-Jupyter kernel to interact with a MicroPython ESP8266 or ESP32 over its serial REPL.  
+Jupyter kernel to interact with a MicroPython board over its REPL interface.
 
 Also with capabilities to work through the WEBREPL (available on ESP8266 only), 
 do Ctrl-C, transfer files and esptools flashing (useful for deployment).
@@ -10,20 +10,10 @@ for examples.
 ## Installation
 
 First install Jupyter: http://jupyter.org/install.html (the Python3 version).
-**They strongly recommended you use the [Anaconda Distribution](https://www.anaconda.com/download/)**
 
-Then clone this repository to a directory using TortoiseGIT or with the shell command (ie on a command line):
+Then install this module:
 
-    git clone https://github.com/goatchurchprime/jupyter_micropython_kernel.git
-
-Install this library (in editable mode) into Python3 using the shell command:
-
-    pip install -e jupyter_micropython_kernel
-
-This creates a small file pointing to this directory in the python/../site-packages 
-directory, and makes it possible to "git update" the library later as it gets improved.
-(Things can go wrong here, and you might need "pip3" or "sudo pip" if you have 
-numerous different versions of python installed
+    pip3 install -e git+https://github.com/andrewleech/jupyter_micropython_kernel#egg=jupyter_micropython_kernel
 
 
 Install the kernel into jupyter itself using the shell command:
@@ -33,7 +23,7 @@ Install the kernel into jupyter itself using the shell command:
 (This creates the small file ".local/share/jupyter/kernels/micropython/kernel.json" 
 that jupyter uses to reference it's kernels
 
-To find out where your kernelspecs are stored, you can type:
+If you're interested, you can find out where your kernelspecs are stored by typing:
 
     jupyter kernelspec list
 
@@ -49,21 +39,34 @@ MicroPython kernel display name listed.
 
 The first cell will need to be something like:
 
-    %serialconnect
+    %connect <device> <args>
+
+eg:
+
+    %connect "USB-SERIAL CH340""
     
-or something that matches the serial port and baudrate that 
+or something that matches the serial port that
 you connect to your MicroPython/ESP8266 with.
 
-You should now be able to execute MicroPython commands 
-by running the cells.
+The <port> <args> bit matches the arguments used for the `pyboard.py`:
 
-'''On Windows it can sometimes be difficult to find the Serial (COM-port) 
-and the right driver.  This is not unique to the jupyter_micropython_kernel
-and is a function of the USB chip that is on the breakout board containing 
-your ESP32/ESP8266.  Find the USB connection in the Device list to see what driver 
-it needs or look for instructions from the supplier of the board.'''
+    <device> --baudrate=115200 --user='micro' --password='python' --wait=0
+        device can be serial port device or name
 
-There is a micropythondemo.ipynb file in the directory you could 
+        device can start with "exec:"
+           "Execute a process and emulate serial connection using its stdin/stdout."
+
+        device can start with "execpty:"
+            Execute a process which creates a PTY and prints slave PTY as
+            first line of its output, and emulate serial connection using
+            this PTY
+
+        device can be an ip address for webrepl communication
+
+
+You should now be able to execute MicroPython commands by running the cells.
+
+There is a micropythondemo.ipynb file in the directory you could
 look at with some of the features shown.
 
 If a cell is taking too long to interrupt, it may respond 
@@ -71,13 +74,7 @@ to a "Kernel" -> "Interrupt" command.
 
 Alternatively hit Escape and then 'i' twice.
 
-To upload the contents of a cell to a file, write: 
-    %sendtofile yourfilename.py 
-    
-as the first line of the cell
-
-To do a soft reboot (when you need to clear out the modules 
-and recover some memory) type:
+To do a soft reboot (when you need to clear out the modules and recover some memory) type:
     %reboot
 
 Note: Restarting the kernel does not actually reboot the device.  
@@ -87,33 +84,26 @@ this interface relies on the ctrl-A non-echoing paste mode to do its stuff.
 You can list all the functions with:
     %lsmagic
 
+Thanks to the built in `mprepl` support, when connected to the micropython board the local
+working directory jupyter was run from will be available on the micropython board at the
+directory `/remote/`
 
-## Debugging
+This allows you to copy files to and from micropython to your pc with ease.
 
-For reference, the notebooks here might be useful:
-  https://github.com/goatchurchprime/jupyter_micropython_developer_notebooks
+A cell can be run in the local python environment instead of the remote kernel by starting a cell with:
+    %local
 
-The system works by finding and connecting to a serial line and
-then issuing the enter paste mode command Ctrl-A (hex 0x01)
+This can be useful to work directly with local files for instance. Commands here will be run by the same
+python as jupyter notebook, however they're run in an `exec` sandbox to ensure jupyter can't be compromised.
 
-In this mode blocks of to-be-executed text are ended with a Ctrl-D
-(hex 0x04).
 
-The response that comes back begins with an "OK" followed by the 
-actual program response, followed by Ctrl-D, followed by any 
-error messages, followed by a second Ctrl-D, followed by a '>'.
-
-You can implement this interface (for debugging purposes) to find out 
-how it's snarling up beginning with:
- "%serialconnect --raw"
-and then doing
- %writebytes -b "sometext"
-and 
- %readbytes
- 
 ## Background
 
-This had been proposed as an enhancement to webrepl with the idea of a jupyter-like 
+This Jupyter MicroPython Kernel was originally based on the amazing work done on https://github.com/goatchurchprime/jupyter_micropython_kernel.git
+
+Their original custom device connection library has been replaced by pyboard and mprepl to take advantage of functionality already implemented there.
+
+This had been proposed as an enhancement to webrepl with the idea of a jupyter-like
 interface to webrepl rather than their faithful emulation of a command line: https://github.com/micropython/webrepl/issues/32
 
 My first implementation operated a spawned-process asyncronous sub-kernel that handled the serial connection. 
