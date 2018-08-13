@@ -490,8 +490,17 @@ class MicroPythonKernel(Kernel):
             self.send_response(self.iopub_socket, 'clear_output', {"wait":True})
         if asciigraphicscode:
             output = "\x1b[{}m{}\x1b[0m".format(asciigraphicscode, output)
-        stream_content = {'name': ("stdout" if n04count == 0 else "stderr"), 'text': output}
-        self.send_response(self.iopub_socket, 'stream', stream_content)
+        if hasattr(output, '_repr_mimebundle_'):
+            data, *metadata = output._repr_mimebundle_()
+            content = {'source': 'kernel',
+                       'data': data}
+            if metadata:
+                content['metadata'] = metadata[0]
+            self.send_response(self.iopub_socket, 'display_data', content)
+        else:
+            if output:
+                stream_content = {'name': ("stdout" if n04count == 0 else "stderr"), 'text': output}
+                self.send_response(self.iopub_socket, 'stream', stream_content)
 
     def do_execute(self, code, silent, store_history=True, user_expressions=None, allow_stdin=False):
         self.silent = silent

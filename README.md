@@ -96,6 +96,13 @@ A cell can be run in the local python environment instead of the remote kernel b
 This can be useful to work directly with local files for instance. Commands here will be run by the same
 python as jupyter notebook, however they're run in an `exec` sandbox to ensure jupyter can't be compromised.
 
+In %local cells, `IPython.display` objects can usually be passed to `print()` to be displayed in graphical
+form like in a normal python jupyter notebook, eg:
+    %local
+    from IPython.display import Image
+    img = Image(filename='test.png')
+    print(img)
+
 
 ## Background
 
