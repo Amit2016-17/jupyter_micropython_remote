@@ -135,7 +135,17 @@ class MicroPythonKernel(Kernel):
             if isinstance(line, str):
                 line += end
             self.sres(line)
-        self.localenv = dict(globals={'print': s_print}, locals={})
+
+        def remote(command):
+            return self.runnormalcell(command, follow=False)
+
+        self.localenv = dict(
+            locals={},
+            globals={
+                'print': s_print,
+                'remote': remote,
+            }
+        )
         exec("__builtins__['print'] = print", self.localenv['globals'], self.localenv['locals'])
 
     def mpycross(self, mpycrossexe, pyfile):
@@ -409,52 +419,31 @@ class MicroPythonKernel(Kernel):
 
         self.sres("Unrecognized percentline {}\n".format([percentline]), 31)
         return cellcontents
-        
-    def runnormalcell(self, cellcontents, bsuppressendcode):
-        # cmdlines = cellcontents.splitlines(True)
-        # r = self.repl.read()
-        # if r:
-        #     self.sres('[priorstuff] ')
-        #     self.sres(str(r))
 
+    def runnormalcell(self, cellcontents, bsuppressendcode=None, follow=True):
+        ret = None
         n04count = 0
 
-        def follow(data):
+        def follower(data):
             nonlocal n04count
             if not data:
                 return
             if b"\x04" in data:
                 data = data.strip(b"\x04")
                 n04count += 1
-            if data:
+            if data and follow:
                 self.sres(data.decode(), n04count=n04count)
+            return data
 
         try:
 
-            ret, ret_err = self.repl.exec_(cellcontents, follow)
+            ret, ret_err = self.repl.exec_(cellcontents, follower)
             if ret_err:
-                follow(ret_err)
-            # if ret:
-            #     self.sres(ret)
+                follower(ret_err)
         except pyboard.PyboardError as ex:
             self.sres('Comms Exception %s' % ex)
+        return ret
 
-        # for line in cmdlines:
-        #     if line:
-        #         if line[-2:] == '\r\n':
-        #             line = line[:-2]
-        #         elif line[-1] == '\n':
-        #             line = line[:-1]
-        #         self.dc.writeline(line)
-        #         r = self.repl.read()
-        #         if r:
-        #             self.sres('[duringwriting] ')
-        #             self.sres(str(r))
-        #
-        # if not bsuppressendcode:
-        #     self.dc.writebytes(b'\r\x04')
-        #     self.dc.receivestream(bseekokay=True)
-        
     def sendcommand(self, cellcontents):
         bsuppressendcode = False  # can't yet see how to get this signal through
         
