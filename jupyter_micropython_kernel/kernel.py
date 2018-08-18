@@ -1,7 +1,13 @@
+import os
+import re
+import sys
+import time
+import logging
+import contextlib
+import subprocess
+
 from ipykernel.kernelbase import Kernel
 
-import logging, time, os, re
-import subprocess
 from . import pyboard, mprepl
 
 logger = logging.getLogger(__name__)
@@ -123,7 +129,14 @@ class MicroPythonKernel(Kernel):
         self.srescapturedlinecount = 0
         self.srescapturedlasttime = 0       # to control the frequency of capturing reported
 
-        self.localenv = dict(globals={'print': self.sres}, locals={})
+        # Configure sandbox for local cells
+        def s_print(line, file=None, end="\n"):
+            line = line.decode() if isinstance(line, bytes) else line
+            if isinstance(line, str):
+                line += end
+            self.sres(line)
+        self.localenv = dict(globals={'print': s_print}, locals={})
+        exec("__builtins__['print'] = print", self.localenv['globals'], self.localenv['locals'])
 
     def mpycross(self, mpycrossexe, pyfile):
         pargs = [mpycrossexe, pyfile]
@@ -133,6 +146,21 @@ class MicroPythonKernel(Kernel):
             self.sres(line.decode())
         for line in process.stderr:
             self.sres(line.decode(), n04count=1)
+
+    @contextlib.contextmanager
+    def stdout_sres(self):
+        sres = self.sres
+
+        class write_sres:
+            def write(self, data):
+                sres(data)
+
+        old = sys.stdout
+        try:
+            sys.stdout = write_sres()
+            yield
+        finally:
+            sys.stdout = old
 
     def interpretpercentline(self, percentline, cellcontents):
         try:
@@ -152,7 +180,6 @@ class MicroPythonKernel(Kernel):
                 self.repl.close()
 
             try:
-
                 self.repl = mprepl.MpRepl(apargs.device,
                                           apargs.port2,
                                           baudrate=apargs.baudrate,
@@ -160,16 +187,8 @@ class MicroPythonKernel(Kernel):
                                           password=apargs.password,
                                           wait=apargs.wait
                                           )
-
-                # if not apargs.raw:
                 self.repl.connect()
                 self.sresSYS("Ready.\n")
-
-                    # else:
-                    #     self.sres("Disconnecting [paste mode not working]\n", 31)
-                    #     self.dc.disconnect(verbose=apargs.verbose)
-                    #     self.sresSYS("  (You may need to reset the device)")
-                    #     cellcontents = ""
 
             except pyboard.PyboardError as ex:
                 self.sresSYS("  Error connecting: %s" % ex)
@@ -189,7 +208,8 @@ class MicroPythonKernel(Kernel):
 
         if percentcommand == ap_local.prog:
             try:
-                self.sres(exec(cellcontents, self.localenv['globals'], self.localenv['locals']))
+                with self.stdout_sres():
+                    self.sres(exec(cellcontents, self.localenv['globals'], self.localenv['locals']))
             except BaseException as ex:
                 import traceback
                 self.sres(traceback.format_exc(-1), n04count=1)
@@ -499,6 +519,8 @@ class MicroPythonKernel(Kernel):
             self.send_response(self.iopub_socket, 'display_data', content)
         else:
             if output:
+                if not isinstance(output, str):
+                    output = repr(output)
                 stream_content = {'name': ("stdout" if n04count == 0 else "stderr"), 'text': output}
                 self.send_response(self.iopub_socket, 'stream', stream_content)
 
