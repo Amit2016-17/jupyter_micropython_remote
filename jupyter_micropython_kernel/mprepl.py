@@ -66,7 +66,8 @@ class RemoteCommand:
     def __init__(self):
         try:
             import pyb
-            self.fout = pyb.USB_VCP()
+            self.write = pyb.USB_VCP().send
+            
             if self.use_second_port:
                 self.fin = pyb.USB_VCP(1)
             else:
@@ -74,7 +75,7 @@ class RemoteCommand:
             self.can_poll = True
         except:
             import sys
-            self.fout = sys.stdout.buffer
+            self.write = sys.stdout.buffer.write
             self.fin = sys.stdin.buffer
             # TODO sys.stdio doesn't support polling
             self.can_poll = False
@@ -97,39 +98,50 @@ class RemoteCommand:
             while(self.fin.any()):
                 self.fin.read()
         except AttributeError: pass
-        self.fout.write(bytearray([0x18, type]))
+        self.write(bytearray([0x18, type]))
     def end(self):
         micropython.kbd_intr(3)
     def rd_uint32(self):
         return struct.unpack('<I', self.rd(4))[0]
     def wr_uint32(self, i):
-        self.fout.write(struct.pack('<I', i))
+        self.write(struct.pack('<I', i))
     def rd_uint64(self):
         return struct.unpack('<Q', self.rd(8))[0]
     def wr_uint64(self, i):
-        self.fout.write(struct.pack('<Q', i))
+        self.write(struct.pack('<Q', i))
     def rd_int32(self):
         return struct.unpack('<i', self.rd(4))[0]
     def wr_int32(self, i):
-        self.fout.write(struct.pack('<i', i))
+        self.write(struct.pack('<i', i))
     def rd_bytes(self):
-        n = struct.unpack('<H', self.rd(2))[0]
+        n = struct.unpack('<I', self.rd(4))[0]
         buf = bytearray(n)
         mv = memoryview(buf)
         r = 0
         while r<n:
-            r += self.rdinto(mv[r:])
+            rd = self.rdinto(mv[r:])
+            if not rd: break
+            r+=rd
         return buf
     def rd_bytes_into(self, buf):
-        n = struct.unpack('<H', self.rd(2))[0]
+        n = struct.unpack('<I', self.rd(4))[0]
         mv = memoryview(buf)
         r = 0
         while r<n:
-            r += self.rdinto(mv[r:])
+            rd = self.rdinto(mv[r:])
+            if not rd: break
+            r+=rd
         return r
     def wr_bytes(self, b):
-        self.fout.write(struct.pack('<H', len(b)))
-        self.fout.write(b)
+        self.write(struct.pack('<I', len(b)))
+        written = 0
+        mv = memoryview(b)
+        while written < len(b):
+            w = self.write(mv[written:])
+            if not w:
+                break
+            written += w
+        return written
     def rd_str(self):
         n = self.rd(1)[0]
         if n == 0:
@@ -140,7 +152,7 @@ class RemoteCommand:
         b = bytes(s, 'utf8')
         l = len(b)
         assert l <= 255
-        self.fout.write(bytearray([l]) + b)
+        self.write(bytearray([l]) + b)
 
 class RemoteFile(io.IOBase):
     def __init__(self, cmd, fd, is_text):
@@ -366,11 +378,25 @@ class PyboardCommand:
     def wr_int32(self, i):
         self.fout.write(struct.pack('<i', i))
     def rd_bytes(self):
-        n = struct.unpack('<H', self.fin.read(2))[0]
-        return self.fin.read(n)
+        rem = n = struct.unpack('<I', self.fin.read(4))[0]
+        data = bytearray(n)
+        while rem > 0:
+            d = self.fin.read(rem)
+            if not d:
+                break
+            data[n-rem:] = d
+            rem -= len(d)
+        return data
     def wr_bytes(self, b):
-        self.fout.write(struct.pack('<H', len(b)))
-        self.fout.write(b)
+        self.fout.write(struct.pack('<I', len(b)))
+        written = 0
+        mv = memoryview(b)
+        while written < len(b):
+            w = self.fout.write(mv[written:])
+            if not w:
+                break
+            written += w
+        return written
     def rd_str(self):
         n = self.fin.read(1)[0]
         if n == 0:
@@ -522,7 +548,7 @@ class MpRepl:
                     except serial.SerialException:
                         pass
 
-        self.pyb.serial.timeout = 5.0
+        self.pyb.serial.timeout = 2.0
         self.fout = fout
         self.cmd = PyboardCommand(self.pyb.serial, self.fout)
 
