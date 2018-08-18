@@ -29,227 +29,8 @@ except ImportError:
     select = None
     import msvcrt
 
-from . import pyboard
-
-
-CMD_EXIT = 0
-CMD_STAT = 1
-CMD_ILISTDIR_START = 2
-CMD_ILISTDIR_NEXT = 3
-CMD_OPEN = 4
-CMD_CLOSE = 5
-CMD_READ = 6
-CMD_WRITE = 7
-CMD_SEEK = 8
-
-
-fs_hook_code = """\
-import os, io, select, ustruct as struct, micropython, sys
-CMD_EXIT = 0
-CMD_STAT = 1
-CMD_ILISTDIR_START = 2
-CMD_ILISTDIR_NEXT = 3
-CMD_OPEN = 4
-CMD_CLOSE = 5
-CMD_READ = 6
-CMD_WRITE = 7
-CMD_SEEK = 8
-
-def exit(code=0):
-    cmd = RemoteCommand()
-    cmd.begin(CMD_EXIT)
-    cmd.wr_int32(code)
-    cmd.end()
-
-class RemoteCommand:
-    use_second_port = False
-    def __init__(self):
-        try:
-            import pyb
-            self.write = pyb.USB_VCP().send
-            
-            if self.use_second_port:
-                self.fin = pyb.USB_VCP(1)
-            else:
-                self.fin = pyb.USB_VCP()
-            self.can_poll = True
-        except:
-            import sys
-            self.write = sys.stdout.buffer.write
-            self.fin = sys.stdin.buffer
-            # TODO sys.stdio doesn't support polling
-            self.can_poll = False
-    def poll_in(self):
-        if self.can_poll:
-            res = select.select([self.fin], [], [], 1000)
-            if not res[0]:
-                raise Exception('timeout waiting for remote response')
-    def rd(self, n):
-        # implement reading with a timeout in case other side disappears
-        self.poll_in()
-        return self.fin.read(n)
-    def rdinto(self, buf):
-        # implement reading with a timeout in case other side disappears
-        self.poll_in()
-        return self.fin.readinto(buf)
-    def begin(self, type):
-        micropython.kbd_intr(-1)
-        try:
-            while(self.fin.any()):
-                self.fin.read()
-        except AttributeError: pass
-        self.write(bytearray([0x18, type]))
-    def end(self):
-        micropython.kbd_intr(3)
-    def rd_uint32(self):
-        return struct.unpack('<I', self.rd(4))[0]
-    def wr_uint32(self, i):
-        self.write(struct.pack('<I', i))
-    def rd_uint64(self):
-        return struct.unpack('<Q', self.rd(8))[0]
-    def wr_uint64(self, i):
-        self.write(struct.pack('<Q', i))
-    def rd_int32(self):
-        return struct.unpack('<i', self.rd(4))[0]
-    def wr_int32(self, i):
-        self.write(struct.pack('<i', i))
-    def rd_bytes(self):
-        n = struct.unpack('<I', self.rd(4))[0]
-        buf = bytearray(n)
-        mv = memoryview(buf)
-        r = 0
-        while r<n:
-            rd = self.rdinto(mv[r:])
-            if not rd: break
-            r+=rd
-        return buf
-    def rd_bytes_into(self, buf):
-        n = struct.unpack('<I', self.rd(4))[0]
-        mv = memoryview(buf)
-        r = 0
-        while r<n:
-            rd = self.rdinto(mv[r:])
-            if not rd: break
-            r+=rd
-        return r
-    def wr_bytes(self, b):
-        self.write(struct.pack('<I', len(b)))
-        written = 0
-        mv = memoryview(b)
-        while written < len(b):
-            w = self.write(mv[written:])
-            if not w:
-                break
-            written += w
-        return written
-    def rd_str(self):
-        n = self.rd(1)[0]
-        if n == 0:
-            return ''
-        else:
-            return str(self.rd(n), 'utf8')
-    def wr_str(self, s):
-        b = bytes(s, 'utf8')
-        l = len(b)
-        assert l <= 255
-        self.write(bytearray([l]) + b)
-
-class RemoteFile(io.IOBase):
-    def __init__(self, cmd, fd, is_text):
-        self.cmd = cmd
-        self.fd = fd
-        self.is_text = is_text
-    def close(self):
-        if self.fd is None:
-            return
-        self.cmd.begin(CMD_CLOSE)
-        self.cmd.wr_int32(self.fd)
-        self.cmd.end()
-        self.fd = None
-    def read(self, n):
-        self.cmd.begin(CMD_READ)
-        self.cmd.wr_int32(self.fd)
-        self.cmd.wr_int32(n)
-        data = self.cmd.rd_bytes()
-        if self.is_text:
-            data = str(data, 'utf8')
-        self.cmd.end()
-        return data
-    def readinto(self, buf):
-        self.cmd.begin(CMD_READ)
-        self.cmd.wr_int32(self.fd)
-        self.cmd.wr_int32(len(buf))
-        n = self.cmd.rd_bytes_into(buf)
-        self.cmd.end()
-        return n
-    def write(self, buf):
-        self.cmd.begin(CMD_WRITE)
-        self.cmd.wr_int32(self.fd)
-        self.cmd.wr_bytes(buf)
-        n = self.cmd.rd_int32()
-        self.cmd.end()
-        return n
-    def seek(self, n):
-        self.cmd.begin(CMD_SEEK)
-        self.cmd.wr_int32(self.fd)
-        self.cmd.wr_int32(n)
-        n = self.cmd.rd_int32()
-        self.cmd.end()
-        return n
-
-class RemoteFS:
-    def mount(self, readonly, mkfs):
-        self.cmd = RemoteCommand()
-        self.readonly = readonly
-    def chdir(self, path):
-        if path.startswith('/'):
-            self.path = path
-        else:
-            self.path += path
-        if not self.path.endswith('/'):
-            self.path += '/'
-    def getcwd(self):
-        return self.path
-    def stat(self, path):
-        self.cmd.begin(CMD_STAT)
-        self.cmd.wr_str(self.path + path)
-        res = self.cmd.rd_int32()
-        if res < 0:
-            raise OSError(-res)
-        return tuple(self.cmd.rd_uint32() for _ in range(10))
-    def ilistdir(self, path):
-        self.cmd.begin(CMD_ILISTDIR_START)
-        self.cmd.wr_str(self.path + path)
-        self.cmd.end()
-        def ilistdir_next():
-            while True:
-                self.cmd.begin(CMD_ILISTDIR_NEXT)
-                name = self.cmd.rd_str()
-                if name:
-                    type = self.cmd.rd_uint32()
-                    inode = self.cmd.rd_uint64()
-                    self.cmd.end()
-                    yield (name, type, inode)
-                else:
-                    self.cmd.end()
-                    break
-        return ilistdir_next()
-    def open(self, path, mode):
-        self.cmd.begin(CMD_OPEN)
-        self.cmd.wr_str(self.path + path)
-        self.cmd.wr_str(mode)
-        fd = self.cmd.rd_int32()
-        self.cmd.end()
-        if fd < 0:
-            raise OSError(-fd)
-        return RemoteFile(self.cmd, fd, mode.find('b') == -1)
-
-def __mount(use_second_port):
-    print(use_second_port)
-    RemoteCommand.use_second_port = use_second_port
-    os.mount(RemoteFS(), '/remote')
-    os.chdir('/remote')
-"""
+from . import pyboard, mprepl_hook
+from .mprepl_hook import MpRepl as Hook
 
 
 class ConsolePosix:
@@ -499,15 +280,15 @@ def do_write(cmd):
 
 
 cmd_table = {
-    CMD_EXIT: do_exit,
-    CMD_STAT: do_stat,
-    CMD_ILISTDIR_START: do_ilistdir_start,
-    CMD_ILISTDIR_NEXT: do_ilistdir_next,
-    CMD_OPEN: do_open,
-    CMD_CLOSE: do_close,
-    CMD_READ: do_read,
-    CMD_WRITE: do_write,
-    CMD_SEEK: do_seek,
+    Hook.CMD_EXIT: do_exit,
+    Hook.CMD_STAT: do_stat,
+    Hook.CMD_ILISTDIR_START: do_ilistdir_start,
+    Hook.CMD_ILISTDIR_NEXT: do_ilistdir_next,
+    Hook.CMD_OPEN: do_open,
+    Hook.CMD_CLOSE: do_close,
+    Hook.CMD_READ: do_read,
+    Hook.CMD_WRITE: do_write,
+    Hook.CMD_SEEK: do_seek,
 }
 
 
@@ -519,6 +300,7 @@ class MpRepl:
         self._console = console
         self.exitcode = None
         self.pyb = None  # type: pyboard.Pyboard
+        self.fs_hook_code = Path(mprepl_hook.__file__).read_text()
 
         if isinstance(dev_in, pyboard.Pyboard):
             self.pyb = dev_in
@@ -627,8 +409,8 @@ class MpRepl:
 
     def connect(self):
         self.pyb.enter_raw_repl()
-        self.pyb.exec_(fs_hook_code)
-        self.pyb.exec_('__mount(%s)' % (self.dev_out is not None))
+        self.pyb.exec_(self.fs_hook_code)
+        self.pyb.exec_('MpRepl.mount(%s)' % (self.dev_out is not None))
 
     def close(self):
         if self.pyb:
@@ -679,7 +461,7 @@ class MpRepl:
                         time.sleep(0.1)
                         n = self.pyb.serial.inWaiting()
                     self.write(b'\x01')
-                    self.pyb.exec_(fs_hook_code)
+                    self.pyb.exec_(self.fs_hook_code)
                     self.write(b'\x02')
                     time.sleep(0.1)
                     self.pyb.serial.read(1)
