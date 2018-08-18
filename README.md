@@ -39,7 +39,7 @@ MicroPython kernel display name listed.
 
 The first cell will need to be something like:
 
-    %connect <device> <args>
+    %connect <device> --baudrate=115200 --user='micro' --password='python' --wait=0
 
 eg:
 
@@ -49,19 +49,18 @@ or something that matches the serial port that
 you connect to your MicroPython/ESP8266 with.
 
 The <port> <args> bit matches the arguments used for the `pyboard.py`:
+            
+    device can be serial port device or name
 
-    <device> --baudrate=115200 --user='micro' --password='python' --wait=0
-        device can be serial port device or name
+    device can start with "exec:"
+       "Execute a process and emulate serial connection using its stdin/stdout."
 
-        device can start with "exec:"
-           "Execute a process and emulate serial connection using its stdin/stdout."
+    device can start with "execpty:"
+        Execute a process which creates a PTY and prints slave PTY as
+        first line of its output, and emulate serial connection using
+        this PTY
 
-        device can start with "execpty:"
-            Execute a process which creates a PTY and prints slave PTY as
-            first line of its output, and emulate serial connection using
-            this PTY
-
-        device can be an ip address for webrepl communication
+    device can be an ip address for webrepl communication
 
 
 You should now be able to execute MicroPython commands by running the cells.
@@ -75,6 +74,7 @@ to a "Kernel" -> "Interrupt" command.
 Alternatively hit Escape and then 'i' twice.
 
 To do a soft reboot (when you need to clear out the modules and recover some memory) type:
+    
     %reboot
 
 Note: Restarting the kernel does not actually reboot the device.  
@@ -82,6 +82,7 @@ Also, pressing the reset button will probably mess things up, because
 this interface relies on the ctrl-A non-echoing paste mode to do its stuff.
 
 You can list all the functions with:
+    
     %lsmagic
 
 Thanks to the built in `mprepl` support, when connected to the micropython board the local
@@ -91,6 +92,7 @@ directory `/remote/`
 This allows you to copy files to and from micropython to your pc with ease.
 
 A cell can be run in the local python environment instead of the remote kernel by starting a cell with:
+    
     %local
 
 This can be useful to work directly with local files for instance. Commands here will be run by the same
@@ -98,6 +100,7 @@ python as jupyter notebook, however they're run in an `exec` sandbox to ensure j
 
 In %local cells, `IPython.display` objects can usually be passed to `print()` to be displayed in graphical
 form like in a normal python jupyter notebook, eg:
+    
     %local
     from IPython.display import Image
     img = Image(filename='test.png')
