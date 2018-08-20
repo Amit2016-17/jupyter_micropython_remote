@@ -16,7 +16,6 @@ import os
 import sys
 import time
 import struct
-import select
 import argparse
 from pathlib import Path
 import serial
@@ -191,6 +190,7 @@ class PyboardCommand:
         self.fout.write(bytearray([l]) + b)
 
 root = './'
+data_path = ''
 data_ilistdir = []
 data_files = []
 
@@ -210,19 +210,20 @@ def do_stat(cmd):
         cmd.wr_int32(0)
         assert len(stat) == 10
         for val in stat:
-            cmd.wr_uint32(val) # TODO will all values always fit in 32 bits?
+            cmd.wr_uint64(val)
 
 
 def do_ilistdir_start(cmd):
     global data_ilistdir
-    path = root + cmd.rd_str()
-    data_ilistdir = os.listdir(path)
+    global data_path
+    data_path = (root + cmd.rd_str() + '/').replace('//', '/')
+    data_ilistdir = os.listdir(data_path)
 
 
 def do_ilistdir_next(cmd):
     if data_ilistdir:
         entry = data_ilistdir.pop(0)
-        stat = os.stat(entry)
+        stat = os.stat(data_path + entry)
         cmd.wr_str(entry)
         cmd.wr_uint32(stat.st_mode & 0xc000)
         cmd.wr_uint64(stat.st_ino)
