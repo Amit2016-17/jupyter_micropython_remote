@@ -30,7 +30,7 @@ except ImportError:
     import msvcrt
 
 from . import pyboard, mprepl_hook
-from .mprepl_hook import MpRepl as Hook
+from .mprepl_hook import RemoteCommand
 
 
 class ConsolePosix:
@@ -280,15 +280,15 @@ def do_write(cmd):
 
 
 cmd_table = {
-    Hook.CMD_EXIT: do_exit,
-    Hook.CMD_STAT: do_stat,
-    Hook.CMD_ILISTDIR_START: do_ilistdir_start,
-    Hook.CMD_ILISTDIR_NEXT: do_ilistdir_next,
-    Hook.CMD_OPEN: do_open,
-    Hook.CMD_CLOSE: do_close,
-    Hook.CMD_READ: do_read,
-    Hook.CMD_WRITE: do_write,
-    Hook.CMD_SEEK: do_seek,
+    RemoteCommand.CMD_EXIT: do_exit,
+    RemoteCommand.CMD_STAT: do_stat,
+    RemoteCommand.CMD_ILISTDIR_START: do_ilistdir_start,
+    RemoteCommand.CMD_ILISTDIR_NEXT: do_ilistdir_next,
+    RemoteCommand.CMD_OPEN: do_open,
+    RemoteCommand.CMD_CLOSE: do_close,
+    RemoteCommand.CMD_READ: do_read,
+    RemoteCommand.CMD_WRITE: do_write,
+    RemoteCommand.CMD_SEEK: do_seek,
 }
 
 
@@ -407,10 +407,21 @@ class MpRepl:
     def connected(self):
         return not self.pyb.serial.closed
 
-    def connect(self):
-        self.pyb.enter_raw_repl()
-        self.pyb.exec_(self.fs_hook_code)
-        self.pyb.exec_('MpRepl.mount(%s)' % (self.dev_out is not None))
+    def exec_chunked(self, script):
+        while True:
+            try:
+                i = script.index('\nclass ', 1)
+            except ValueError:
+                self.pyb.exec_(script)
+                break
+            self.pyb.exec_(script[0:i])
+            script = script[i:]
+
+    def connect(self, enter_raw=True):
+        if enter_raw:
+            self.pyb.enter_raw_repl()
+        self.exec_chunked(self.fs_hook_code)
+        self.pyb.exec_('RemoteFS(%s)' % (self.dev_out is not None))
 
     def close(self):
         if self.pyb:
@@ -461,7 +472,7 @@ class MpRepl:
                         time.sleep(0.1)
                         n = self.pyb.serial.inWaiting()
                     self.write(b'\x01')
-                    self.pyb.exec_(self.fs_hook_code)
+                    self.connect(enter_raw=False)
                     self.write(b'\x02')
                     time.sleep(0.1)
                     self.pyb.serial.read(1)
