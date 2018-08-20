@@ -15,6 +15,7 @@ class RemoteCommand:
     CMD_READ = 6
     CMD_WRITE = 7
     CMD_SEEK = 8
+    CMD_HASH = 9
 
     use_second_port = False
 
@@ -174,6 +175,13 @@ class RemoteFile(io.IOBase):
         n = self.cmd.rd_int32()
         self.cmd.end()
         return n
+
+    def sha256(self):
+        self.cmd.begin(RemoteCommand.CMD_HASH)
+        self.cmd.wr_int32(self.fd)
+        data = self.cmd.rd_bytes()
+        self.cmd.end()
+        return data
 
 
 class RemoteFS:

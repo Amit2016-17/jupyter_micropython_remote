@@ -20,6 +20,7 @@ import argparse
 from pathlib import Path
 import serial
 import serial.tools.list_ports
+import hashlib
 try:
     import termios
     import select
@@ -264,13 +265,6 @@ def do_read(cmd):
     cmd.wr_bytes(buf)
 
 
-def do_seek(cmd):
-    fd = cmd.rd_int32()
-    n = cmd.rd_int32()
-    data_files[fd][0].seek(n)
-    cmd.wr_int32(n)
-
-
 def do_write(cmd):
     fd = cmd.rd_int32()
     buf = cmd.rd_bytes()
@@ -278,6 +272,26 @@ def do_write(cmd):
         buf = str(buf, 'utf8')
     n = data_files[fd][0].write(buf)
     cmd.wr_int32(n)
+
+
+def do_seek(cmd):
+    fd = cmd.rd_int32()
+    n = cmd.rd_int32()
+    data_files[fd][0].seek(n)
+    cmd.wr_int32(n)
+
+
+def do_sha256(cmd):
+    fd = cmd.rd_int32()
+    f = data_files[fd][0]
+    n = f.tell()
+    f.seek(0)
+    sha256 = hashlib.sha256()
+    for block in iter(lambda: f.read(256*1024), b''):
+        sha256.update(block)
+    f.seek(n)
+    h = sha256.hexdigest().encode()
+    cmd.wr_bytes(h)
 
 
 cmd_table = {
@@ -290,6 +304,7 @@ cmd_table = {
     RemoteCommand.CMD_READ: do_read,
     RemoteCommand.CMD_WRITE: do_write,
     RemoteCommand.CMD_SEEK: do_seek,
+    RemoteCommand.CMD_HASH: do_sha256,
 }
 
 
