@@ -317,6 +317,7 @@ class MpRepl:
         self.exitcode = None
         self.pyb = None  # type: pyboard.Pyboard
         self.fs_hook_code = Path(mprepl_hook.__file__).read_text()
+        self.fs_util_code = (Path(mprepl_hook.__file__).parent / 'mprepl_utils.py').read_text()
 
         if isinstance(dev_in, pyboard.Pyboard):
             self.pyb = dev_in
@@ -437,6 +438,7 @@ class MpRepl:
         if enter_raw:
             self.pyb.enter_raw_repl()
         self.exec_chunked(self.fs_hook_code)
+        self.exec_chunked(self.fs_util_code)
         self.pyb.exec_('RemoteFS(%s)' % (self.dev_out is not None))
 
     def close(self):
