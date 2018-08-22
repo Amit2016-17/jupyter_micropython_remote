@@ -3,7 +3,7 @@ import re
 import sys
 import time
 import logging
-import contextlib
+import threading
 import subprocess
 from ipykernel.ipkernel import IPythonKernel
 
@@ -12,10 +12,6 @@ from . import pyboard, mprepl
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-serialtimeout = 0.5
-serialtimeoutcount = 10
-
-wifimessageignore = re.compile("(\x1b\[[\d;]*m)?[WI] \(\d+\) (wifi|system_api|modsocket|phy|event|cpu_start|heap_init|network|wpa): ")
 
 # use of argparse for handling the %commands in the cells
 import argparse, shlex
@@ -67,7 +63,7 @@ ap_writefilepc = argparse.ArgumentParser(prog="%%writefile", description="write 
 ap_writefilepc.add_argument('--append', '-a', action='store_true')
 ap_writefilepc.add_argument('--execute', '-x', action='store_true')
 ap_writefilepc.add_argument('destinationfilename', type=str)
- 
+
 
 def parseap(ap, percentstringargs1, extras=False):
     try:
@@ -77,33 +73,6 @@ def parseap(ap, percentstringargs1, extras=False):
         return args
     except SystemExit:  # argparse throws these because it assumes you only want to do the command line
         return None  # should be a default one
-        
-
-# Complete streaming of data to file with a quiet mode (listing number of lines)
-# Set this up for pulse reading and plotting in a second jupyter page
-
-# argparse to say --binary in the help for the tag
-
-# 2. Complete the implementation of websockets on ESP32  -- nearly there
-# 3. Create the streaming of pulse measurements to a simple javascript frontend and listing
-# 4. Try implementing ESP32 webrepl over these websockets using exec()
-# 6. Finish debugging the IR codes
-
-
-# * upgrade picoweb to handle jpg and png and js
-# * code that serves a websocket to a browser from picoweb
-
-# then make the websocket from the ESP32 as well
-# then make one that serves out sensor data just automatically
-# and access and read that from javascript
-# and get the webserving of webpages (and javascript) also to happen
-
-
-# should also handle shell-scripting other commands, like arpscan for mac address to get to ip-numbers
-
-# compress the websocket down to a single straightforward set of code
-# take 1-second of data (100 bytes) and time the release of this string 
-# to the web-browser
 
 
 class MicroPythonKernel(IPythonKernel):
@@ -162,7 +131,7 @@ class MicroPythonKernel(IPythonKernel):
         if percentcommand == ap_connect.prog:
 
             apargs = parseap(ap_connect, percentstringargs[1:])
-            
+
             if self.repl and self.repl.connected:
                 self.repl.close()
 
@@ -206,7 +175,7 @@ class MicroPythonKernel(IPythonKernel):
                 else:
                     self.sres("Writing {}\n\n".format(apargs.destinationfilename), asciigraphicscode=32)
                     fout = open(apargs.destinationfilename, ("w"))
-                    
+
                 fout.write(cellcontents)
                 fout.close()
             else:
@@ -230,11 +199,11 @@ class MicroPythonKernel(IPythonKernel):
             else:
                 self.sres(ap_mpycross.format_help())
             return True
-            
+
         if percentcommand == "%comment":
             self.sres(" ".join(percentstringargs[1:]), asciigraphicscode=32)
             return True
-            
+
         if percentcommand == "%lsmagic":
             self.sres(re.sub("usage: ", "", ap_capture.format_usage()))
             self.sres("    records output to a file\n\n")
@@ -262,15 +231,15 @@ class MicroPythonKernel(IPythonKernel):
             self.sres("    does serial.write() of the python quoted string given\n\n")
             self.sres(re.sub("usage: ", "", ap_writefilepc.format_usage()))
             self.sres("    write contents of cell to a file\n\n")
-            
+
             return None
 
         if percentcommand == ap_disconnect.prog:
             apargs = parseap(ap_disconnect, percentstringargs[1:])
             if self.repl:
                 self.repl.close()
-            return None
-        
+            return True
+
         # remaining commands require a connection
         if not (self.repl and self.repl.connected):
             return True
@@ -310,12 +279,12 @@ class MicroPythonKernel(IPythonKernel):
             else:
                 self.sres(l)   # strings come back from webrepl
             return True
-            
+
         if percentcommand == "%rebootdevice":
             self.repl.pyb.exit_raw_repl()
             self.repl.connect()
             return True
-            
+
         if percentcommand == "%reboot":
             self.sres("Did you mean %rebootdevice?\n", 31)
             return None
@@ -331,7 +300,7 @@ class MicroPythonKernel(IPythonKernel):
         if percentcommand == "%sendbytes":
             self.sres("Did you mean %writebytes?\n", 31)
             return None
-            
+
         if percentcommand == "%reboot":
             self.sres("Did you mean %rebootdevice?\n", 31)
             return None
@@ -394,7 +363,7 @@ class MicroPythonKernel(IPythonKernel):
     def remote(self, command):
         return self.runnormalcell(command, follow=False)
 
-    def runnormalcell(self, cellcontents, bsuppressendcode=None, follow=True):
+    def runnormalcell(self, cellcontents, follow=True):
         ret = None
         n04count = 0
 
@@ -410,7 +379,6 @@ class MicroPythonKernel(IPythonKernel):
             return data
 
         try:
-
             ret, ret_err = self.repl.exec_(cellcontents, follower)
             if ret_err:
                 self.sres(ret_err, stderr=True)
@@ -419,8 +387,6 @@ class MicroPythonKernel(IPythonKernel):
         return ret
 
     def sendcommand(self, cellcontents):
-        bsuppressendcode = False  # can't yet see how to get this signal through
-        
         if self.srescapturedoutputfile:
             self.srescapturedoutputfile.close()   # shouldn't normally get here
             self.sres("closing stuck open srescapturedoutputfile\n")
@@ -431,11 +397,11 @@ class MicroPythonKernel(IPythonKernel):
             self.sres("  %connect to connect\n")
             self.sres("  %lsmagic to list commands")
             return
-            
+
         # run the cell contents as normal
         if cellcontents:
-            self.runnormalcell(cellcontents, bsuppressendcode)
-            
+            self.runnormalcell(cellcontents)
+
     def sresSYS(self, output, clear_output=False):   # system call
         self.sres(output, asciigraphicscode=34, clear_output=clear_output)
 
@@ -472,52 +438,44 @@ class MicroPythonKernel(IPythonKernel):
 
     def do_execute(self, code, silent, store_history=True, user_expressions=None, allow_stdin=False):
         self.silent = silent
+        import pydevd
+        pydevd.settrace('localhost', port=9876, suspend=False,
+                        stdoutToServer=False, stderrToServer=False)
+
+        while True:
+            # extract any %-commands we have here at the start (or ending?), tolerating pure comment lines and white
+            # space before the first %
+            # if there's no %-command in there, then no lines at the front get dropped due to being comments
+            mpercentline = re.match("(?:(?:\s*|(?:\s*#.*\n))*)(%.*)\n?(?:[ \r]*\n)?", code)
+            if not mpercentline:
+                break
+            try:
+                code = code[mpercentline.end():]  # discards the %command and prior line(s) from the cell contents
+                if not self.interpretpercentline(mpercentline.group(1), code):
+                    return {'status': 'ok', 'execution_count': self.execution_count, 'payload': [], 'user_expressions': {}}
+
+            except self.LocalCell:
+                # Run local cell in regular ipython kernel
+                return super(MicroPythonKernel, self).do_execute(code=code, silent=silent,
+                                                                 store_history=store_history,
+                                                                 user_expressions=user_expressions,
+                                                                 allow_stdin=allow_stdin)
         if not code.strip():
+            # No code to run, just exit
             return {'status': 'ok', 'execution_count': self.execution_count, 'payload': [], 'user_expressions': {}}
 
-        interrupted = False
-        
-        # # clear buffer out before executing any commands (except the readbytes one)
-        # if self.repl and self.repl.connected and not re.match("\s*%readbytes|\s*%disconnect|\s*%connect|\s*websocketconnect", code):
-        #     priorbuffer = None
-        #     try:
-        #         priorbuffer = self.repl.read()
-        #     except KeyboardInterrupt:
-        #         interrupted = True
-        #     except OSError as e:
-        #         priorbuffer = []
-        #         self.sres("\n\n***Connection broken [%s]\n" % str(e.strerror), 31)
-        #         self.sres("You may need to reconnect")
-        #     except (pyboard.PyboardError, Exception) as e:
-        #         priorbuffer = []
-        #         self.sres("\n\n***Exception [%s]\n" % str(e), 31)
-        #         self.sres("You may need to reconnect")
-        #
-        #     if priorbuffer:
-        #         if isinstance(priorbuffer, bytes):
-        #             try:
-        #                 priorbuffer = priorbuffer.decode()
-        #             except UnicodeDecodeError:
-        #                 priorbuffer = str(priorbuffer)
-        #
-        #         for pbline in priorbuffer.splitlines():
-        #             if wifimessageignore.match(pbline):
-        #                 continue   # filter out boring wifi status messages
-        #             if pbline:
-        #                 self.sres('[leftinbuffer] ')
-        #                 self.sres(str([pbline]))
-        #                 self.sres('\n')
+        # Let notebook capture outputs and display for us
+        with self.shell.builtin_trap:
+            self.shell.display_trap.set()
 
-        try:
-            if not interrupted:
+            # Run (remaining) code in connected micropython board
+            interrupted = False
+            try:
                 self.sendcommand(code)
-        except KeyboardInterrupt:
-            interrupted = True
-        except OSError as e:
-            self.sres("\n\n***OSError [%s]\n\n" % str(e.strerror))
-        #except pexpect.EOF:
-        #    self.sres(self.asyncmodule.before + 'Restarting Bash')
-        #    self.startasyncmodule()
+            except KeyboardInterrupt:
+                interrupted = True
+            except OSError as e:
+                self.sres("\n\n***OSError [%s]\n\n" % str(e.strerror))
 
         if self.srescapturedoutputfile:
             if self.srescapturemode == 2:
@@ -526,25 +484,22 @@ class MicroPythonKernel(IPythonKernel):
                 output = "{} lines captured.".format(self.srescapturedlinecount)  # finish off by updating with the correct number captured
                 stream_content = {'name': "stdout", 'text': output }
                 self.send_response(self.iopub_socket, 'stream', stream_content)
-                
+
             self.srescapturedoutputfile.close()
             self.srescapturedoutputfile = None
             self.srescapturemode = 0
-            
+
         if interrupted:
             self.sresSYS("\n\n*** Sending Ctrl-C\n\n")
             if self.repl and self.repl.connected:
                 self.repl.write(b'\r\x03\x03')
-                interrupted = True
                 try:
                     self.repl.read(timeout=5)
-                    # self.dc.receivestream(bseekokay=False, b5secondtimeout=True)
                 except KeyboardInterrupt:
                     self.sres("\n\nKeyboard interrupt while waiting response on Ctrl-C\n\n")
                 except OSError as e:
                     self.sres("\n\n***OSError while issuing a Ctrl-C [%s]\n\n" % str(e.strerror))
             return {'status': 'abort', 'execution_count': self.execution_count}
-            
-        # everything already gone out with send_response(), but could detect errors (text between the two \x04s
 
+        # everything already gone out with send_response(), but could detect errors (text between the two \x04s
         return {'status': 'ok', 'execution_count': self.execution_count, 'payload': [], 'user_expressions': {}}
