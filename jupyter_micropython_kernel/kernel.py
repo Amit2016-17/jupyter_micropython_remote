@@ -5,8 +5,7 @@ import time
 import logging
 import contextlib
 import subprocess
-
-from ipykernel.kernelbase import Kernel
+from ipykernel.ipkernel import IPythonKernel
 
 from . import pyboard, mprepl
 
@@ -107,11 +106,11 @@ def parseap(ap, percentstringargs1, extras=False):
 # to the web-browser
 
 
-class MicroPythonKernel(Kernel):
+class MicroPythonKernel(IPythonKernel):
     implementation = 'micropython_kernel'
     implementation_version = "v3"
 
-    banner = "MicroPython Serializer"
+    banner = "MicroPython Kernel"
 
     language_info = {'name': 'micropython',
                      'codemirror_mode': 'python',
@@ -119,7 +118,8 @@ class MicroPythonKernel(Kernel):
                      'file_extension': '.py'}
 
     def __init__(self, **kwargs):
-        Kernel.__init__(self, **kwargs)
+        super(MicroPythonKernel, self).__init__(**kwargs)
+
         self.silent = False
         self.repl = None  # type: mprepl.MpRepl
         self.mpycrossexe = None
@@ -129,24 +129,11 @@ class MicroPythonKernel(Kernel):
         self.srescapturedlinecount = 0
         self.srescapturedlasttime = 0       # to control the frequency of capturing reported
 
-        # Configure sandbox for local cells
-        def s_print(line, file=None, end="\n"):
-            line = line.decode() if isinstance(line, bytes) else line
-            if isinstance(line, str):
-                line += end
-            self.sres(line)
-
-        def remote(command):
-            return self.runnormalcell(command, follow=False)
-
-        self.localenv = dict(
-            locals={},
-            globals={
-                'print': s_print,
-                'remote': remote,
-            }
-        )
-        exec("__builtins__['print'] = print", self.localenv['globals'], self.localenv['locals'])
+        # Create global `remote()` command in %local cells
+        try:
+            self.shell.user_global_ns['remote'] = self.remote
+        except AttributeError:
+            logger.exception("Could not set 'remote' in local environment")
 
     def mpycross(self, mpycrossexe, pyfile):
         pargs = [mpycrossexe, pyfile]
@@ -155,22 +142,12 @@ class MicroPythonKernel(Kernel):
         for line in process.stdout:
             self.sres(line.decode())
         for line in process.stderr:
-            self.sres(line.decode(), n04count=1)
+            self.sres(line.decode(), stderr=True)
 
-    @contextlib.contextmanager
-    def stdout_sres(self):
-        sres = self.sres
-
-        class write_sres:
-            def write(self, data):
-                sres(data)
-
-        old = sys.stdout
-        try:
-            sys.stdout = write_sres()
-            yield
-        finally:
-            sys.stdout = old
+    class LocalCell(Exception):
+        """
+        Raised when a %local cell is hit to tell kernel to forward to ipython
+        """
 
     def interpretpercentline(self, percentline, cellcontents):
         try:
@@ -203,9 +180,9 @@ class MicroPythonKernel(Kernel):
             except pyboard.PyboardError as ex:
                 self.sresSYS("  Error connecting: %s" % ex)
 
-                cellcontents = ""
+                return False
 
-            return cellcontents.strip() and cellcontents or None
+            return True
 
         if percentcommand == ap_shell.prog:
             apargs, args = parseap(ap_shell, percentstringargs[1:], True)
@@ -214,16 +191,10 @@ class MicroPythonKernel(Kernel):
                     self.sres(proc.stdout.readline().decode())
                 self.sres(proc.stdout.read().decode())
 
-            return cellcontents.strip() and cellcontents or None
+            return True
 
         if percentcommand == ap_local.prog:
-            try:
-                with self.stdout_sres():
-                    self.sres(exec(cellcontents, self.localenv['globals'], self.localenv['locals']))
-            except BaseException as ex:
-                import traceback
-                self.sres(traceback.format_exc(-1), n04count=1)
-            return None
+            raise self.LocalCell
 
         if percentcommand == ap_writefilepc.prog:
             apargs = parseap(ap_writefilepc, percentstringargs[1:])
@@ -242,7 +213,7 @@ class MicroPythonKernel(Kernel):
                 self.sres(ap_writefilepc.format_help())
             if not apargs.execute:
                 return None
-            return cellcontents # should add in some blank lines at top to get errors right
+            return True  # should add in some blank lines at top to get errors right
 
         if percentcommand == "%mpy-cross":
             apargs = parseap(ap_mpycross, percentstringargs[1:])
@@ -258,11 +229,11 @@ class MicroPythonKernel(Kernel):
                     self.mpycrossexe = "/home/julian/extrepositories/micropython/mpy-cross/mpy-cross"
             else:
                 self.sres(ap_mpycross.format_help())
-            return cellcontents.strip() and cellcontents or None
+            return True
             
         if percentcommand == "%comment":
             self.sres(" ".join(percentstringargs[1:]), asciigraphicscode=32)
-            return cellcontents.strip() and cellcontents or None
+            return True
             
         if percentcommand == "%lsmagic":
             self.sres(re.sub("usage: ", "", ap_capture.format_usage()))
@@ -302,7 +273,7 @@ class MicroPythonKernel(Kernel):
         
         # remaining commands require a connection
         if not (self.repl and self.repl.connected):
-            return cellcontents
+            return True
 
         if percentcommand == ap_capture.prog:
             apargs = parseap(ap_capture, percentstringargs[1:])
@@ -313,7 +284,7 @@ class MicroPythonKernel(Kernel):
                 self.srescapturedlinecount = 0
             else:
                 self.sres(ap_capture.format_help())
-            return cellcontents
+            return True
 
         if percentcommand == ap_writebytes.prog:
             # (not effectively using the --binary setting)
@@ -325,7 +296,7 @@ class MicroPythonKernel(Kernel):
                     self.sres(res, asciigraphicscode=34)
             else:
                 self.sres(ap_writebytes.format_help())
-            return cellcontents.strip() and cellcontents or None
+            return True
 
         if percentcommand == ap_readbytes.prog:
             # (not effectively using the --binary setting)
@@ -338,12 +309,12 @@ class MicroPythonKernel(Kernel):
                 self.sres(l.decode(errors="ignore"))
             else:
                 self.sres(l)   # strings come back from webrepl
-            return cellcontents.strip() and cellcontents or None
+            return True
             
         if percentcommand == "%rebootdevice":
             self.repl.pyb.exit_raw_repl()
             self.repl.connect()
-            return cellcontents.strip() and cellcontents or None
+            return True
             
         if percentcommand == "%reboot":
             self.sres("Did you mean %rebootdevice?\n", 31)
@@ -420,6 +391,9 @@ class MicroPythonKernel(Kernel):
         self.sres("Unrecognized percentline {}\n".format([percentline]), 31)
         return cellcontents
 
+    def remote(self, command):
+        return self.runnormalcell(command, follow=False)
+
     def runnormalcell(self, cellcontents, bsuppressendcode=None, follow=True):
         ret = None
         n04count = 0
@@ -432,14 +406,14 @@ class MicroPythonKernel(Kernel):
                 data = data.strip(b"\x04")
                 n04count += 1
             if data and follow:
-                self.sres(data.decode(), n04count=n04count)
+                self.sres(data.decode(), stderr=bool(n04count))
             return data
 
         try:
 
             ret, ret_err = self.repl.exec_(cellcontents, follower)
             if ret_err:
-                follower(ret_err)
+                self.sres(ret_err, stderr=True)
         except pyboard.PyboardError as ex:
             self.sres('Comms Exception %s' % ex)
         return ret
@@ -451,16 +425,7 @@ class MicroPythonKernel(Kernel):
             self.srescapturedoutputfile.close()   # shouldn't normally get here
             self.sres("closing stuck open srescapturedoutputfile\n")
             self.srescapturedoutputfile = None
-            
-        # extract any %-commands we have here at the start (or ending?), tolerating pure comment lines and white space before the first % (if there's no %-command in there, then no lines at the front get dropped due to being comments)
-        while True:
-            mpercentline = re.match("(?:(?:\s*|(?:\s*#.*\n))*)(%.*)\n?(?:[ \r]*\n)?", cellcontents)
-            if not mpercentline:
-                break
-            cellcontents = self.interpretpercentline(mpercentline.group(1), cellcontents[mpercentline.end():])   # discards the %command and a single blank line (if there is one) from the cell contents
-            if cellcontents is None:
-                return
-                
+
         if not (self.repl and self.repl.connected):
             self.sres("No serial connected\n", 31)
             self.sres("  %connect to connect\n")
@@ -473,20 +438,22 @@ class MicroPythonKernel(Kernel):
             
     def sresSYS(self, output, clear_output=False):   # system call
         self.sres(output, asciigraphicscode=34, clear_output=clear_output)
-    # 1=bold, 31=red, 32=green, 34=blue; from http://ascii-table.com/ansi-escape-sequences.php
 
-    def sres(self, output, asciigraphicscode=None, n04count=0, clear_output=False):
+    def sres(self, output, asciigraphicscode=None, stderr=False, clear_output=False):
+        # asciigraphicscode
+        # 1=bold, 31=red, 32=green, 34=blue; from http://ascii-table.com/ansi-escape-sequences.php
+
         output = output.decode() if isinstance(output, bytes) else output
         if self.silent:
             return
-            
-        if self.srescapturedoutputfile and (n04count == 0) and not asciigraphicscode:
+
+        if self.srescapturedoutputfile and not stderr and not asciigraphicscode:
             self.srescapturedoutputfile.write(output)
             self.srescapturedlinecount += len(output.split("\n"))-1
             if self.srescapturemode == 3:            # 0 none, 1 print lines, 2 print on-going line count (--quiet), 3 print only final line count (--QUIET)
                 return
-                
-            # changes the printing out to a lines captured statement every 1second.  
+
+            # changes the printing out to a lines captured statement every 1second.
             if self.srescapturemode == 2:  # (allow stderrors to drop through to normal printing
                 srescapturedtime = time.time()
                 if srescapturedtime < self.srescapturedlasttime + 1:   # update no more frequently than once a second
@@ -499,19 +466,9 @@ class MicroPythonKernel(Kernel):
             self.send_response(self.iopub_socket, 'clear_output', {"wait":True})
         if asciigraphicscode:
             output = "\x1b[{}m{}\x1b[0m".format(asciigraphicscode, output)
-        if hasattr(output, '_repr_mimebundle_'):
-            data, *metadata = output._repr_mimebundle_()
-            content = {'source': 'kernel',
-                       'data': data}
-            if metadata:
-                content['metadata'] = metadata[0]
-            self.send_response(self.iopub_socket, 'display_data', content)
-        else:
-            if output:
-                if not isinstance(output, str):
-                    output = repr(output)
-                stream_content = {'name': ("stdout" if n04count == 0 else "stderr"), 'text': output}
-                self.send_response(self.iopub_socket, 'stream', stream_content)
+
+        # The ipython display hook will grab this for us
+        print(output, end="", file=(sys.stderr if stderr else sys.stdout))
 
     def do_execute(self, code, silent, store_history=True, user_expressions=None, allow_stdin=False):
         self.silent = silent
