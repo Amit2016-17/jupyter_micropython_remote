@@ -10,7 +10,7 @@ from IPython.utils.tempdir import TemporaryDirectory
 
 # sys.executable should be "python3"
 kernel_json = { "argv": [sys.executable, "-m", "jupyter_micropython_kernel", "-f", "{connection_file}"],
- "display_name": "MicroPython - USB",
+ "display_name": "MicroPython Remote",
  "language": "micropython"
 }
 
