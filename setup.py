@@ -4,7 +4,7 @@ from setuptools import setup
 
 # Get the long description from the README file
 project = Path(__file__).parent
-with (project / 'README.md').open(encoding='utf-8') as f:
+with (project / 'README.rst').open(encoding='utf-8') as f:
     long_description = f.read()
 
 
