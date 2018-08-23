@@ -335,9 +335,12 @@ class Pyboard:
             command_bytes = bytes(command, encoding='utf8')
 
         # check we have a prompt
-        data = self.read_until(1, b'>')
+        data = self.read_until(1, b'>', timeout=None)
         if not data.endswith(b'>'):
-            raise PyboardError('could not enter raw repl')
+            self.serial.write(b'\r\n')
+            data = self.read_until(1, b'>')
+            if not data.endswith(b'>'):
+                raise PyboardError('could not enter raw repl')
 
         # write command
         for i in range(0, len(command_bytes), 256):
@@ -351,7 +354,7 @@ class Pyboard:
             raise PyboardError('could not exec command (response: %r)' % data)
 
     def exec_raw(self, command, timeout=10, data_consumer=None):
-        self.exec_raw_no_follow(command);
+        self.exec_raw_no_follow(command)
         return self.follow(timeout, data_consumer)
 
     def eval(self, expression):

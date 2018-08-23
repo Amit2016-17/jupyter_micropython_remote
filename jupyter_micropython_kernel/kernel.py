@@ -1,10 +1,12 @@
 import os
 import re
+import io
 import sys
 import time
 import logging
 import threading
 import subprocess
+from future_thread import Future
 from ipykernel.ipkernel import IPythonKernel
 
 from . import pyboard, mprepl
@@ -92,6 +94,7 @@ class MicroPythonKernel(IPythonKernel):
         self.silent = False
         self.repl = None  # type: mprepl.MpRepl
         self.mpycrossexe = None
+        self.bg_printer_thread = None  # type: Future
 
         self.srescapturemode = 0            # 0 none, 1 print lines, 2 print on-going line count (--quiet), 3 print only final line count (--QUIET)
         self.srescapturedoutputfile = None  # used by %capture command
@@ -145,6 +148,9 @@ class MicroPythonKernel(IPythonKernel):
                                           )
                 self.repl.connect()
                 self.sresSYS("Ready.\n")
+
+                if not self.bg_printer_thread or not self.bg_printer_thread.running():
+                    self.bg_printer_thread = Future(self.printer_thread)
 
             except pyboard.PyboardError as ex:
                 self.sresSYS("  Error connecting: %s" % ex)
@@ -363,6 +369,25 @@ class MicroPythonKernel(IPythonKernel):
     def remote(self, command):
         return self.runnormalcell(command, follow=False)
 
+    bg_printer = threading.Lock()
+
+    def printer_thread(self):
+        buff = io.BytesIO()
+        while True:
+            try:
+                with self.bg_printer:
+                    if self.repl and self.repl.connected:
+                        c = self.repl.read(1)
+                        if c:
+                            buff.write(c)
+                            if len(c) > 1 or ord(c) <= 15:
+                                line = buff.getbuffer()
+                                if line.strip() != '>':
+                                    self.sres(line)
+                                buff = io.BytesIO()
+            except Exception as ex:
+                self.sres(ex)
+
     def runnormalcell(self, cellcontents, follow=True):
         ret = None
         n04count = 0
@@ -379,7 +404,8 @@ class MicroPythonKernel(IPythonKernel):
             return data
 
         try:
-            ret, ret_err = self.repl.exec_(cellcontents, follower)
+            with self.bg_printer:
+                ret, ret_err = self.repl.exec_(cellcontents, follower)
             if ret_err:
                 self.sres(ret_err, stderr=True)
         except pyboard.PyboardError as ex:
