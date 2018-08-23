@@ -1,14 +1,23 @@
+from pathlib import Path
 from setuptools import setup
 
-setup(name='jupyter_micropython_kernel',
-      version='0.1.3',
-      description='Jupyter notebook kernel for remote execution on a Micropython system.',
-      author='Julian Todd, Tony DiCola',
-      author_email='julian@goatchurch.org.uk',
-      keywords='jupyter micropython',
-      url='https://github.com/goatchurchprime/jupyter_micropython_kernel',
-      license='GPL3',
-      packages=['jupyter_micropython_kernel'],
-      install_requires=['pyserial>=3.4', 'websocket-client>=0.44', 'jupyter', 'mpy-cross']
-)
 
+# Get the long description from the README file
+project = Path(__file__).parent
+with (project / 'README.md').open(encoding='utf-8') as f:
+    long_description = f.read()
+
+
+setup(name='jupyter_micropython_kernel',
+      use_scm_version=True,
+      description='Jupyter notebook kernel for remote execution on a Micropython system.',
+      long_description=long_description,
+      author='Andrew Leech, Julian Todd, Tony DiCola',
+      author_email='andrew@alelec.net',
+      keywords='jupyter micropython',
+      url='https://gitlab.com/alelec/jupyter_micropython_kernel',
+      license='GPL3',
+      packages=['mpy_kernel'],
+      install_requires=['pyserial>=3.4', 'websocket-client>=0.44', 'jupyter', 'mpy-cross'],
+      setup_requires=['setuptools_scm'],
+)

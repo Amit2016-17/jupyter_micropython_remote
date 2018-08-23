@@ -9,7 +9,7 @@ from IPython.utils.tempdir import TemporaryDirectory
 # copied out from https://github.com/takluyver/bash_kernel/blob/master/bash_kernel/install.py
 
 # sys.executable should be "python3"
-kernel_json = { "argv": [sys.executable, "-m", "jupyter_micropython_kernel", "-f", "{connection_file}"],
+kernel_json = { "argv": [sys.executable, "-m", "mpy_kernel", "-f", "{connection_file}"],
  "display_name": "MicroPython Remote",
  "language": "micropython"
 }

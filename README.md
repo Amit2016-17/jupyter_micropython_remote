@@ -13,20 +13,13 @@ First install Jupyter: http://jupyter.org/install.html (the Python3 version).
 
 Then install this module:
 
-    pip3 install -e git+https://github.com/andrewleech/jupyter_micropython_kernel#egg=jupyter_micropython_kernel
-
+    pip3 install jupyter_micropython_kernel
 
 Install the kernel into jupyter itself using the shell command:
 
-    python -m jupyter_micropython_kernel.install
+    python -m mpy_kernel.install
 
-(This creates the small file ".local/share/jupyter/kernels/micropython/kernel.json" 
-that jupyter uses to reference it's kernels
-
-If you're interested, you can find out where your kernelspecs are stored by typing:
-
-    jupyter kernelspec list
-
+This registers the kernel with Jupyter so it can be selected for use in notebooks
 
 ## Running
 
@@ -111,49 +104,5 @@ form like in a normal python jupyter notebook, eg:
 
 This Jupyter MicroPython Kernel was originally based on the amazing work done on https://github.com/goatchurchprime/jupyter_micropython_kernel.git
 
-Their original custom device connection library has been replaced by pyboard and mprepl to take advantage of functionality already implemented there.
-
-This had been proposed as an enhancement to webrepl with the idea of a jupyter-like
-interface to webrepl rather than their faithful emulation of a command line: https://github.com/micropython/webrepl/issues/32
-
-My first implementation operated a spawned-process asyncronous sub-kernel that handled the serial connection. 
-Ascync technology requires the whole program to work this way, or none of it.  
-So my next iteration was going to do it using standard python threads to handle the blocking 
-of the serial connections.  
-
-However, further review proved that this was unnecessarily complex if you consider the whole 
-kernel itself to be operating asyncronously with the front end notebook UI.  In particular, 
-if the notebook can independently issue Ctrl-C KeyboardInterrupt signals into the kernel, there is no longer 
-a need to worry about what happens when it hangs waiting for input from a serial connection.  
-
-Other known projects that have implemented a Jupyter Micropython kernel are:
-* https://github.com/adafruit/jupyter_micropython_kernel
-* https://github.com/willingc/circuitpython_kernel
-* https://github.com/TDAbboud/mpkernel
-* https://github.com/takluyver/ubit_kernel
-* https://github.com/jneines/nodemcu_kernel
-
-In my defence, this is not an effect of not-invented-here syndrome; I did not discover most of these 
-other projects until I had mostly written this one.  
-
-I do think that for robustness it is important to expose the full processes 
-of making connections and But for my purposes, this is more robust and contains debugging (of the 
-serial connections) capability.
-
-Other known projects to have made Jupyter-like or secondary interfaces to Micropython:
-* https://github.com/nickzoic/mpy-webpad
-* https://github.com/BetaRavener/uPyLoader
-
-The general approach of all of these is to make use of the Ctrl-A 
-paste mode with its Ctrl-D end of message signals.  
-The problem with this mode is it was actually designed for 
-automatic testing rather than supporting an interactive REPL (Read Execute Print Loop) system
-(citation required), so there can be reliability issues to do with 
-accidentally escaping from this mode or not being able to detect the state 
-of being in it.  
-
-For example, you can't safely do a Ctrl-B to leave the paste mode and then a 
-Ctrl-A to re-enter paste mode cleanly, because a Ctrl-B in the non-paste mode 
-will reboot the device.  
-
-
+Their original custom device connection library has been replaced by pyboard and mprepl to take advantage of proven functionality implemented there. mprepl has since been extended substantially.  
+The kernel has also been reworked to extend form the full ipython kernel, so local cells are fully-functional and we can use the ipython display mechanisms for output formatting.
