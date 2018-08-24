@@ -145,7 +145,11 @@ class MicroPythonKernel(IPythonKernel):
                                           wait=apargs.wait
                                           )
                 self.repl.connect()
-                self.sresSYS("Ready.\n")
+                try:
+                    port = self.repl.pyb.serial.port
+                except:
+                    port = repr(self.repl.pyb.serial)
+                self.sresSYS(f"Connected on {port}\n")
 
             except pyboard.PyboardError as ex:
                 self.sresSYS("  Error connecting: %s" % ex)
