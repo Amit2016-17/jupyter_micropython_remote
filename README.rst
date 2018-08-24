@@ -174,6 +174,15 @@ local cell
    slider = FloatSlider(min=0,max=1.0,step=0.01, layout=Layout(width='80%', height='80px'))
    interact(set_hue, hue=slider)
 
+Contributing
+------------
+
+Please use and improve this kernel any way you see fit!
+
+I'd prefer pull requests against the main repo: https://gitlab.com/alelec/jupyter_micropython_kernel
+I'll happily review and accept anything on the legacy github if you are aren't already on gitlab: https://github.com/andrewleech/jupyter_micropython_kernel
+
+
 Background
 ----------
 

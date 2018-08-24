@@ -455,9 +455,9 @@ class MicroPythonKernel(IPythonKernel):
 
     def do_execute(self, code, silent, store_history=True, user_expressions=None, allow_stdin=False):
         self.silent = silent
-        import pydevd
-        pydevd.settrace('localhost', port=9876, suspend=False,
-                        stdoutToServer=False, stderrToServer=False)
+        # import pydevd
+        # pydevd.settrace('localhost', port=9876, suspend=False,
+        #                 stdoutToServer=False, stderrToServer=False)
 
         while True:
             # extract any %-commands we have here at the start (or ending?), tolerating pure comment lines and white
