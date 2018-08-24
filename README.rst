@@ -7,15 +7,14 @@ interface.
 Typically used with micropython boards over the USB / Serial interface,
 however it should also work through the WEBREPL (available on ESP8266
 only). Also includes a few advanced features for micorpython project
-management; uploading files, running mpy-cross, flashing boards etc. See
-https://github.com/goatchurchprime/jupyter_micropython_developer_notebooks
-for examples.
+management; running mpy-cross, uploading files, syncing local libs to micropython etc.
 
 Installation
 ------------
 
-First install python 3.6 or above, ensure it’s available from your
-command line.
+First install python 3.6 or above and ensure it’s available from your
+command line. Optionally (recommended) use your favourite pipenv / virtualenv to set
+up a clean environment to run jupyter from.
 
 Then install this module:
 
@@ -105,11 +104,17 @@ You can list all the functions with:
 
    %lsmagic
 
-Thanks to the built in ``mprepl`` support, when connected to the
-micropython board the local working directory jupyter was run from will
-be available on the micropython board at the directory ``/remote/``
+mprepl
+-------
 
-This allows you to copy files to and from micropython to your pc with
+The communications interface to the micropython module is based on mprepl and pyboard.
+mprepl was originally sourced from https://github.com/micropython/micropython/pull/3034
+
+This module utilises the virtual filesystem within micropython ( > 1.9.4 required )
+to mount the local pc's working directory jupyter was run from in the actual micropython
+environment at the directory ``/remote/``
+
+This allows you to view, open, read, write and copy files to and from micropython to your pc with
 ease.
 
 ::
@@ -126,18 +131,17 @@ regex filters.
 
    Util.sync("/remote/src", "/lib/", delete=True, include=".*\.mpy")
 
-Commands can be run in the local python environment instead of the remote
-kernel by starting a cell with:
+See the file ``mpy_kernel/mprepl_utils.py`` for more details
 
-::
-
-   %local
-
+%local
+------
+Individual cells can also be run on the local pc instead of the remote
+kernel by starting a cell with ``%local``
 
 This can be useful to work directly with local files, use ipywidgets, etc.
 Commands here will be run by the standard ipython kernel.
 
-In `%local` cells, a special global function ``remote()`` is available which
+In `%local` cells, a special global function ``remote()`` is also available which
 will pass a single string argument to the micropython board to be run, returning
 any stdout from the command. Eg:
 
