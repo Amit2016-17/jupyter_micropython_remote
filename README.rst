@@ -1,5 +1,5 @@
-Jupyter MicroPython Kernel
-==========================
+Jupyter MicroPython Remote Kernel
+=================================
 
 Jupyter kernel to interact with a MicroPython board over its REPL
 interface.
@@ -20,7 +20,7 @@ Then install this module:
 
 ::
 
-   pip3 install jupyter_micropython_kernel
+   pip3 install jupyter_micropython_remote
 
 Install the kernel into jupyter itself using the shell command:
 
@@ -179,8 +179,8 @@ Contributing
 
 Please use and improve this kernel any way you see fit!
 
-I'd prefer pull requests against the main repo: https://gitlab.com/alelec/jupyter_micropython_kernel
-I'll happily review and accept anything on the legacy github if you are aren't already on gitlab: https://github.com/andrewleech/jupyter_micropython_kernel
+I'd prefer pull requests against the main repo: https://gitlab.com/alelec/jupyter_micropython_remote
+I'll happily review and accept anything on the legacy github if you are aren't already on gitlab: https://github.com/andrewleech/jupyter_micropython_remote
 
 
 Background
@@ -188,7 +188,7 @@ Background
 
 This Jupyter MicroPython Kernel was originally based on the amazing work
 done on
-https://github.com/goatchurchprime/jupyter_micropython_kernel.git
+https://github.com/goatchurchprime/jupyter_micropython_remote.git
 
 | Their original custom device connection library has been replaced by
   pyboard and mprepl to take advantage of proven functionality
