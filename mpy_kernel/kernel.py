@@ -3,8 +3,9 @@ import re
 import sys
 import time
 import logging
-import threading
+import tempfile
 import subprocess
+from pathlib import Path
 from ipykernel.ipkernel import IPythonKernel
 
 from . import pyboard, mprepl
@@ -36,13 +37,13 @@ ap_readbytes = argparse.ArgumentParser(prog="%readbytes", add_help=False)
 ap_readbytes.add_argument('--binary', '-b', action='store_true')
 
 ap_sendtofile = argparse.ArgumentParser(prog="%sendtofile", description="send a file to the microcontroller's file system", add_help=False)
-ap_sendtofile.add_argument('--append', '-a', action='store_true')
-ap_sendtofile.add_argument('--mkdir', '-d', action='store_true')
+# ap_sendtofile.add_argument('--append', '-a', action='store_true')
+#ap_sendtofile.add_argument('--mkdir', '-d', action='store_true')
 ap_sendtofile.add_argument('--binary', '-b', action='store_true')
 ap_sendtofile.add_argument('--execute', '-x', action='store_true')
 ap_sendtofile.add_argument('--source', help="source file", type=str, default="<<cellcontents>>", nargs="?")
-ap_sendtofile.add_argument('--quiet', '-q', action='store_true')
-ap_sendtofile.add_argument('--QUIET', '-Q', action='store_true')
+#ap_sendtofile.add_argument('--quiet', '-q', action='store_true')
+#ap_sendtofile.add_argument('--QUIET', '-Q', action='store_true')
 ap_sendtofile.add_argument('destinationfilename', type=str, nargs="?")
 
 ap_mpycross = argparse.ArgumentParser(prog="%mpy-cross", add_help=False)
@@ -314,9 +315,26 @@ class MicroPythonKernel(IPythonKernel):
             if apargs and not (apargs.source == "<<cellcontents>>" and not apargs.destinationfilename) and (apargs.source != None):
 
                 destfn = apargs.destinationfilename
+
                 def sendtofile(filename, contents):
-                    raise NotImplementedError
-                    self.dc.sendtofile(filename, apargs.mkdir, apargs.append, apargs.binary, apargs.quiet, contents)
+                    cd = os.getcwd()
+                    try:
+                        with tempfile.TemporaryDirectory() as tempdir:
+                            f = Path(tempdir) / Path(filename).name
+                            if apargs.binary:
+                                f.write_bytes(contents)
+                            else:
+                                f.write_text(contents)
+
+                            os.chdir(f.parent)
+                            # Let notebook capture outputs and display for us
+                            with self.shell.builtin_trap:
+                                self.shell.display_trap.set()
+                                self.sendcommand(f"Util.copy(src_path='/remote/{f.name}', tgt_path='{filename}')")
+                    finally:
+                        os.chdir(cd)
+
+                    # self.dc.sendtofile(filename, apargs.mkdir, apargs.append, apargs.binary, apargs.quiet, contents)
 
                 if apargs.source == "<<cellcontents>>":
                     filecontents = cellcontents
@@ -408,7 +426,6 @@ class MicroPythonKernel(IPythonKernel):
     def sres(self, output, asciigraphicscode=None, stderr=False, clear_output=False):
         # asciigraphicscode
         # 1=bold, 31=red, 32=green, 34=blue; from http://ascii-table.com/ansi-escape-sequences.php
-
         output = output.decode() if isinstance(output, bytes) else output
         if self.silent:
             return
