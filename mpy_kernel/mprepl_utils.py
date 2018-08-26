@@ -11,17 +11,19 @@ class Util:
 
     @staticmethod
     def mkdirs(path):
-        path = path.rstrip('/').replace('//', '/')
-        splpath = path.split('/')
-        if splpath[0]:
-            splpath.insert(0, '')
-        for i in range(3, len(splpath) + 1):
-            p = '/'.join(splpath[0:i])
-            try:
-                os.mkdir(p)
-            except Exception as e:
-                if 'EEXIST' not in str(e):
-                    print(e)
+        try:
+            i = path.index('/')
+            while True:
+                i = path.index('/', i+1)
+
+                p = path[0:i]
+                try:
+                    os.mkdir(p)
+                except Exception as e:
+                    if 'EEXIST' not in str(e):
+                        print(e)
+        except ValueError:
+            pass
 
     # From https://github.com/micropython/micropython-lib/blob/master/stat/stat.py
     S_IFDIR = 0o040000
@@ -169,7 +171,7 @@ class Util:
                     else:
                         os.remove(existing)
                     print("Deleted      %s" % existing)
-                else:
-                    print("Not Deleting %s" % existing)
+                # else:
+                #     print("Not Deleting %s" % existing)
 
 gc.collect()
