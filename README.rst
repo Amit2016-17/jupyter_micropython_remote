@@ -9,10 +9,17 @@ however it should also work through the WEBREPL (available on ESP8266
 only). Also includes a few advanced features for micorpython project
 management; running mpy-cross, uploading files, syncing local libs to micropython etc.
 
+Micropython
+-----------
+This kernel requires support in micropython from https://github.com/micropython/micropython/pull/3836
+At the time of publishing, this is not in the current release, 1.9.4, so will require a master / daily snapshot until 1.9.5
+
 Installation
 ------------
 
-First install python 3.6 or above and ensure it’s available from your
+Ensure you have a new enough micropython installed on your board (see above).
+
+You also need python 3.6 or above, ensuring it’s available from your current
 command line. Optionally (recommended) use your favourite pipenv / virtualenv to set
 up a clean environment to run jupyter from.
 
@@ -20,7 +27,7 @@ Then install this module:
 
 ::
 
-   pip3 install jupyter_micropython_remote
+   pip install jupyter_micropython_remote
 
 Install the kernel into jupyter itself using the shell command:
 
