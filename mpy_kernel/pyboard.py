@@ -87,7 +87,7 @@ class PyboardError(Exception):
 class TelnetToSerial:
     def __init__(self, ip, user, password, read_timeout=None):
         import telnetlib
-        self.tn = telnetlib.Telnet(ip, timeout=15)
+        self.tn = telnetlib.Telnet(*ip.split(":"), timeout=15)
         self.read_timeout = read_timeout
         if b'Login as:' in self.tn.read_until(b'Login as:', timeout=read_timeout):
             self.tn.write(bytes(user, 'ascii') + b"\r\n")
