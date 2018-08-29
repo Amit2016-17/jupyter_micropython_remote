@@ -6,6 +6,7 @@ import logging
 import tempfile
 import subprocess
 from pathlib import Path
+import serial.tools.list_ports
 from ipykernel.ipkernel import IPythonKernel
 
 from . import pyboard, mprepl
@@ -50,6 +51,9 @@ ap_mpycross = argparse.ArgumentParser(prog="%mpy-cross", add_help=False)
 ap_mpycross.add_argument('--set-exe', type=str)
 ap_mpycross.add_argument('pyfile', type=str, nargs="?")
 
+ap_esptool = argparse.ArgumentParser(prog="%esptool", add_help=False)
+ap_esptool.add_argument('--port', '-p')
+
 ap_shell = argparse.ArgumentParser(prog="%shell", add_help=False)
 ap_shell.add_argument('args', nargs="*")
 
@@ -93,6 +97,7 @@ class MicroPythonKernel(IPythonKernel):
         self.silent = False
         self.repl = None  # type: mprepl.MpRepl
         self.mpycrossexe = None
+        self.esptool_command = None
 
         self.srescapturemode = 0            # 0 none, 1 print lines, 2 print on-going line count (--quiet), 3 print only final line count (--QUIET)
         self.srescapturedoutputfile = None  # used by %capture command
@@ -155,6 +160,39 @@ class MicroPythonKernel(IPythonKernel):
                 self.sresSYS("  Error connecting: %s" % ex)
 
                 return False
+
+            return True
+
+        if percentcommand == ap_esptool.prog:
+            apargs, args = parseap(ap_esptool, percentstringargs[1:], True)
+            port = None
+            if apargs.port:
+                if apargs.port.upper().startswith('COM') or apargs.port.startswith('/dev/'):
+                    port = apargs.port
+                else:
+                    ports = list(serial.tools.list_ports.grep(apargs.port))
+                    port = ports[0].device
+
+            if self.esptool_command is None:
+                for command in ("esptool.py", "esptool"):
+                    try:
+                        subprocess.check_call([command, "-h"])
+                        self.esptool_command = command
+                        break
+                    except (subprocess.CalledProcessError, OSError):
+                        pass
+                if self.esptool_command is None:
+                    self.sres("esptool not found on path\n")
+                    return
+
+            pargs = [self.esptool_command]
+            if port:
+                pargs.extend(["--port", port])
+
+            with subprocess.Popen(pargs + list(args), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, bufsize=0) as proc:
+                while proc.poll() is None:
+                    self.sres(proc.stdout.readline().decode())
+                self.sres(proc.stdout.read().decode())
 
             return True
 
