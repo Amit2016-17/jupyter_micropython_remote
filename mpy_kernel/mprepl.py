@@ -29,8 +29,15 @@ except ImportError:
     select = None
     import msvcrt
 
-from . import pyboard, mprepl_hook
-from .mprepl_hook import RemoteCommand
+try:
+    from . import pyboard, mprepl_hook
+    from .mprepl_hook import RemoteCommand
+except ImportError:
+    tools=Path(__file__).parent
+    if tools not in sys.path:
+        sys.path.append(tools)
+    import pyboard, mprepl_hook
+    from mprepl_hook import RemoteCommand
 
 
 class ConsolePosix:
