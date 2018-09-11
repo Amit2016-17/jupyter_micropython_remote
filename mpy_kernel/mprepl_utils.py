@@ -121,7 +121,6 @@ class Util:
 
     @staticmethod
     def sync(source, target, delete=True, include=None, exclude=None):
-        source = source.rstrip('/')
         rel_paths = []
         if target.endswith('/'):
             tdir = target
