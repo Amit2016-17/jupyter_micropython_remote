@@ -1,4 +1,4 @@
-import gc, os, re, ubinascii, uhashlib
+import gc, uos, re, ubinascii, uhashlib
 
 class Util:
     @staticmethod
@@ -18,7 +18,7 @@ class Util:
 
                 p = path[0:i]
                 try:
-                    os.mkdir(p)
+                    uos.mkdir(p)
                 except Exception as e:
                     if 'EEXIST' not in str(e):
                         print(e)
@@ -34,7 +34,7 @@ class Util:
     @staticmethod
     def isdir(path):
         try:
-            return os.stat(path)[Util.st_mode] & Util.S_IFMT == Util.S_IFDIR
+            return uos.stat(path)[Util.st_mode] & Util.S_IFMT == Util.S_IFDIR
         except OSError as ex:
             if 'ENOENT' in str(ex):
                 return False
@@ -43,7 +43,7 @@ class Util:
     @staticmethod
     def getsize(path):
         try:
-            return os.stat(path)[Util.st_size]
+            return uos.stat(path)[Util.st_size]
         except OSError as ex:
             if 'ENOENT' in str(ex):
                 return 0
@@ -54,7 +54,7 @@ class Util:
         if not Util.isdir(top):
             yield top
         else:
-            for d in os.listdir(top):
+            for d in uos.listdir(top):
                 fullpath = '/'.join((top, d))
                 if Util.isdir(fullpath):
                     for f in Util.walk(fullpath):  # recurse into subdir
@@ -100,27 +100,32 @@ class Util:
             #     print("Changed: %s - %s" % (ubinascii.hexlify(lhash), rhash))
 
         if copy:
-            # src_size = os.stat(src_path).st_size
-            print("Copying: %s -> %s " % (src_path, tgt_path), end="")
-            size = total = Util.getsize(src_path)
-            chunk = 512
-            b = bytearray(chunk)
-            mv = memoryview(b)
-            with open(src_path, 'rb') as sfile:
-                with open(tgt_path, 'wb') as tfile:
-                    while size:
-                        r = sfile.readinto(mv[0:min(size, chunk)])
-                        # print(r)
-                        size -= r
-                        if r < chunk:
-                            tfile.write(mv[0:r])
-                            break
-                        else:
-                            tfile.write(b)
-                    print("(%d bytes)" % total)
+            try:
+                # src_size = uos.stat(src_path).st_size
+                print("Copying: %s -> %s " % (src_path, tgt_path), end="")
+                size = total = Util.getsize(src_path)
+                chunk = 512
+                b = bytearray(chunk)
+                mv = memoryview(b)
+                with open(src_path, 'rb') as sfile:
+                    with open(tgt_path, 'wb') as tfile:
+                        while size:
+                            r = sfile.readinto(mv[0:min(size, chunk)])
+                            # print(r)
+                            size -= r
+                            if r < chunk:
+                                tfile.write(mv[0:r])
+                                break
+                            else:
+                                tfile.write(b)
+                        print("(%d bytes)" % total)
+            except Exception as ex:
+                print('\n', '\033[91m', "Error while copying , error code:", str(ex), '\033[0m')
 
     @staticmethod
     def sync(source, target, delete=True, include=None, exclude=None):
+        #just_contents = source.endswith('/')
+        # source = source.rstrip('/')
         rel_paths = []
         if target.endswith('/'):
             tdir = target
@@ -162,13 +167,16 @@ class Util:
             for existing in Util.walk(tdir):
                 isdir = Util.isdir(existing)
                 if isdir:
-                    if len(os.listdir(existing)):
+                    if len(uos.listdir(existing)):
                         continue
                 if existing[tdir.rfind('/') + 1:] not in rel_paths:
+                    if exclude:
+                        if exclude.match(existing):
+                            continue
                     if isdir:
-                        os.rmdir(existing)
+                        uos.rmdir(existing)
                     else:
-                        os.remove(existing)
+                        uos.remove(existing)
                     print("Deleted      %s" % existing)
                 # else:
                 #     print("Not Deleting %s" % existing)

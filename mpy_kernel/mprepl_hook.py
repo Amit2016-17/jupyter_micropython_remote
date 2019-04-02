@@ -1,8 +1,9 @@
 try:
-    import os, io, gc, select, ustruct as struct, micropython
+    import uos, uio as io, gc, select, ustruct as struct, micropython
+    gc.collect()
 except ImportError:
-    pass
-gc.collect()
+    import io, os as uos
+    gc = None
 
 
 class RemoteCommand:
@@ -13,9 +14,11 @@ class RemoteCommand:
     CMD_OPEN = 4
     CMD_CLOSE = 5
     CMD_READ = 6
-    CMD_WRITE = 7
-    CMD_SEEK = 8
-    CMD_HASH = 9
+    CMD_READLINE = 7
+    CMD_WRITE = 8
+    CMD_SEEK = 9
+    CMD_HASH = 10
+    CMD_IOCTL = 11
 
     use_second_port = False
 
@@ -134,6 +137,15 @@ class RemoteFile(io.IOBase):
         self.fd = fd
         self.is_text = is_text
 
+    def ioctl(self, request, arg):
+        self.cmd.begin(RemoteCommand.CMD_IOCTL)
+        self.cmd.wr_int32(self.fd)
+        self.cmd.wr_int32(request)
+        self.cmd.wr_int32(arg)
+        n = self.cmd.rd_int32()
+        self.cmd.end()
+        return n
+
     def close(self):
         if self.fd is None:
             return
@@ -159,6 +171,15 @@ class RemoteFile(io.IOBase):
         n = self.cmd.rd_bytes_into(buf)
         self.cmd.end()
         return n
+
+    def readline(self):
+        self.cmd.begin(RemoteCommand.CMD_READLINE)
+        self.cmd.wr_int32(self.fd)
+        data = self.cmd.rd_bytes()
+        if self.is_text:
+            data = str(data, 'utf8')
+        self.cmd.end()
+        return data
 
     def write(self, buf):
         self.cmd.begin(RemoteCommand.CMD_WRITE)
@@ -193,8 +214,11 @@ class RemoteFile(io.IOBase):
 class RemoteFS:
     def __init__(self, use_second_port):
         RemoteCommand.use_second_port = use_second_port
-        os.mount(self, '/remote')
-        os.chdir('/remote')
+        uos.mount(self, '/remote')
+        self.path = '/'
+
+    def umount(self):
+        pass
 
     def mount(self, readonly, mkfs):
         self.cmd = RemoteCommand()
@@ -256,4 +280,20 @@ def exit(code=0):
     cmd.wr_int32(code)
     cmd.end()
 
-gc.collect()
+
+def _reset(delay):
+    import utime
+    import machine
+    print("restarting...")
+    utime.sleep(delay)
+    uos.umount('/remote')
+    uos.sync()
+    machine.reset()
+
+
+def reset(code=0):
+    exit(code)
+    micropython.schedule(_reset, 1)
+
+if gc:
+    gc.collect()

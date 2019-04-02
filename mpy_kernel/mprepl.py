@@ -32,8 +32,8 @@ except ImportError:
 try:
     from . import pyboard, mprepl_hook
     from .mprepl_hook import RemoteCommand
-except ImportError:
-    tools=Path(__file__).parent
+except (ImportError, SystemError):
+    tools = Path(__file__).parent
     if tools not in sys.path:
         sys.path.append(tools)
     import pyboard, mprepl_hook
@@ -225,7 +225,7 @@ def do_ilistdir_start(cmd):
     global data_ilistdir
     global data_path
     data_path = (root + cmd.rd_str() + '/').replace('//', '/')
-    data_ilistdir = os.listdir(data_path)
+    data_ilistdir = os.listdir(data_path.rstrip('/'))
 
 
 def do_ilistdir_next(cmd):
@@ -272,6 +272,14 @@ def do_read(cmd):
     cmd.wr_bytes(buf)
 
 
+def do_readline(cmd):
+    fd = cmd.rd_int32()
+    buf = data_files[fd][0].readline()
+    if data_files[fd][1]:
+        buf = bytes(buf, 'utf8')
+    cmd.wr_bytes(buf)
+
+
 def do_write(cmd):
     fd = cmd.rd_int32()
     buf = cmd.rd_bytes()
@@ -301,6 +309,30 @@ def do_sha256(cmd):
     cmd.wr_bytes(h)
 
 
+def do_ioctl(cmd):
+    fd = cmd.rd_int32()
+    request = cmd.rd_int32()
+    arg = cmd.rd_int32()
+
+    # data_files[fd][0].seek(n)
+
+    MP_STREAM_FLUSH = 1
+    MP_STREAM_SEEK = 2
+    MP_STREAM_CLOSE = 4
+
+    ret = -1
+    if request == MP_STREAM_FLUSH:
+        data_files[fd][0].flush()
+        ret = 0
+    elif request == MP_STREAM_SEEK:
+        raise NotImplementedError
+    elif request == MP_STREAM_CLOSE:
+        data_files[fd][0].close()
+        ret = 0
+
+    cmd.wr_int32(ret)
+
+
 cmd_table = {
     RemoteCommand.CMD_EXIT: do_exit,
     RemoteCommand.CMD_STAT: do_stat,
@@ -309,9 +341,11 @@ cmd_table = {
     RemoteCommand.CMD_OPEN: do_open,
     RemoteCommand.CMD_CLOSE: do_close,
     RemoteCommand.CMD_READ: do_read,
+    RemoteCommand.CMD_READLINE: do_readline,
     RemoteCommand.CMD_WRITE: do_write,
     RemoteCommand.CMD_SEEK: do_seek,
     RemoteCommand.CMD_HASH: do_sha256,
+    RemoteCommand.CMD_IOCTL: do_ioctl,
 }
 
 
@@ -323,8 +357,12 @@ class MpRepl:
         self._console = console
         self.exitcode = None
         self.pyb = None  # type: pyboard.Pyboard
-        self.fs_hook_code = Path(mprepl_hook.__file__).read_text()
-        self.fs_util_code = (Path(mprepl_hook.__file__).parent / 'mprepl_utils.py').read_text()
+        try:
+            self.fs_hook_code = (Path(mprepl_hook.__file__).parent / 'mprepl_hook.py').read_text()
+            self.fs_util_code = (Path(mprepl_hook.__file__).parent / 'mprepl_utils.py').read_text()
+        except Exception as ex:
+            print (ex)
+            raise
 
         if isinstance(dev_in, pyboard.Pyboard):
             self.pyb = dev_in
@@ -375,9 +413,11 @@ class MpRepl:
         while (self.pyb.serial.inWaiting() >= n if n else self.pyb.serial.inWaiting()) \
                 and (timeout is None or time.time() < timeout):
             c = self.pyb.serial.read(1)
-            read += self.handle(c)
-            if n:
-                n -= len(c)
+            c = self.handle(c)
+            if c is not None:
+                read += c
+                if n:
+                    n -= len(c)
         return read
 
     def data_consumer(self, callback):
@@ -390,7 +430,9 @@ class MpRepl:
         if c == b'\x18':
             # a special command
             c = self.pyb.serial.read(1)[0]
-            self.exitcode = cmd_table[c](self.cmd)
+            _exit = cmd_table[c](self.cmd)
+            if _exit is not None:
+                self.exitcode = _exit
             c = None
 
         elif not VT_ENABLED and c == b'\x1b':
@@ -416,7 +458,7 @@ class MpRepl:
             handle = self.data_consumer(data_consumer)
         else:
             handle = self.handle
-        return self.pyb.exec_raw(command, timeout=60, data_consumer=handle)
+        return self.pyb.exec_raw(command, timeout=120, data_consumer=handle)
 
     def run_script(self, script):
         script = Path(script)
@@ -461,18 +503,29 @@ class MpRepl:
             except Exception as ex:
                 print("Exception closing: %s" % ex)
 
-    def main_loop(self, pyfiles):
+    def main_loop(self, pyfiles, exit_immediately=False, quiet=False):
         self.connect()
-        self.console(bytes('Connected to MicroPython at %s\r\n' % self.dev_in, 'utf8'))
-        self.console(bytes('Local directory %s is mounted at /remote\r\n' % root, 'utf8'))
+        if not quiet:
+            self.console(bytes('Connected to MicroPython at %s\r\n' % self.dev_in, 'utf8'))
+            self.console(bytes('Local directory %s is mounted at /remote\r\n' % root, 'utf8'))
 
         if pyfiles:
             for pyfile in pyfiles:
-                self.run_script(pyfile)
+                try:
+                    self.run_script(pyfile)
+                except:
+                    if self.exitcode is None:
+                        raise
+            if self.exitcode is None and exit_immediately:
+                self.exitcode = 0
 
-        self.pyb.exit_raw_repl()
+        try:
+            self.pyb.exit_raw_repl()
+        except serial.SerialException:
+            if self.exitcode is None:
+                raise
 
-        if self.exitcode is None:
+        if self.exitcode is None and not quiet:
             self.console(bytes('Use Ctrl-X to exit this shell\r\n', 'utf8'))
     
         while self.exitcode is None:
@@ -524,6 +577,8 @@ def main():
     parser.add_argument('port', default='/dev/ttyACM0', help='micropython repl serial port')
     parser.add_argument('--port2', default=None, help='if provided, use second serial port for binary data')
     parser.add_argument('--scripts', nargs='*', help='Any provided scripts are run sequentially at startup')
+    parser.add_argument('--exit', action="store_true", help='Automatically exit after scripts have been run')
+    parser.add_argument('--quiet', action="store_true", help='Avoid printing user guidance information')
 
     args = parser.parse_args()
 
@@ -532,10 +587,11 @@ def main():
 
     repl = MpRepl(args.port, args.port2, console=console)
     try:
-        ret = repl.main_loop(args.scripts)
+        ret = repl.main_loop(args.scripts, args.exit, args.quiet)
     finally:
         console.exit()
     return ret
+
 
 if __name__ == '__main__':
     sys.exit(main() or 0)
