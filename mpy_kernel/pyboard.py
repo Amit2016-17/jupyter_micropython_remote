@@ -263,8 +263,13 @@ class Pyboard:
 
     def read_until(self, min_num_bytes, ending, timeout=10, data_consumer=None):
         data = self.serial.read(min_num_bytes)
+
+        def end_strip(_data):
+            return _data[:-1*(len(ending))] if _data.endswith(ending) else _data
+
         if data_consumer:
-            data_consumer(data)
+            data_consumer(end_strip(data))
+
         timeout_count = 0
         while True:
             if data.endswith(ending):
@@ -273,7 +278,7 @@ class Pyboard:
                 new_data = self.serial.read(1)
                 data = data + new_data
                 if data_consumer:
-                    data_consumer(new_data)
+                    data_consumer(end_strip(new_data))
                 timeout_count = 0
             else:
                 timeout_count += 1
@@ -340,14 +345,14 @@ class Pyboard:
         # return normal and error output
         return data, data_err
 
-    def exec_raw_no_follow(self, command):
+    def exec_raw_no_follow(self, command, data_consumer=None):
         if isinstance(command, bytes):
             command_bytes = command
         else:
             command_bytes = bytes(command, encoding='utf8')
 
         # check we have a prompt
-        data = self.read_until(1, b'>')
+        data = self.read_until(1, b'>', data_consumer=data_consumer)
         if not data.endswith(b'>'):
             raise PyboardError('could not enter raw repl')
 
@@ -358,8 +363,8 @@ class Pyboard:
         self.serial.write(b'\x04')
 
         # check if we could exec command
-        data = self.serial.read(2)
-        if data != b'OK':
+        data = self.read_until(2, b'OK', data_consumer=data_consumer)
+        if not data.endswith(b'OK'):
             raise PyboardError('could not exec command (response: %r)' % data)
 
     def exec_raw(self, command, timeout=10, data_consumer=None):
