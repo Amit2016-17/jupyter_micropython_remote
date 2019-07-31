@@ -18,6 +18,9 @@ setup(name='jupyter_micropython_remote',
       url='https://gitlab.com/alelec/jupyter_micropython_remote',
       license='GPL3',
       packages=['mpy_kernel'],
-      install_requires=['pyserial>=3.4', 'jupyter', 'mpy-cross'],
+      install_requires=['jupyter', 'pyserial'],
+      extras_require={
+        'mpy':  ["mpy-cross"],
+      },
       setup_requires=['setuptools_scm'],
 )
